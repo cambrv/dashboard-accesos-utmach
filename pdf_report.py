@@ -441,7 +441,7 @@ def _crear_grafico_png(fig, ancho_cm=None, alto_cm=None, scale=2):
     Convierte una figura Plotly a PNG en memoria.
     """
     if fig is None:
-        return None
+        return None, "Figura nula"
 
     try:
         # Ajustamos el layout exclusivamente para el PDF antes de generar imagen
@@ -453,13 +453,15 @@ def _crear_grafico_png(fig, ancho_cm=None, alto_cm=None, scale=2):
             width=width,
             height=height,
             scale=scale,
+            engine="kaleido"
         )
 
-        return io.BytesIO(imagen), width, height
+        return (io.BytesIO(imagen), width, height), None
 
     except Exception as e:
-        print(f"[PDF] Error convirtiendo gráfico a PNG: {e}")
-        return None
+        error_msg = f"Error Kaleido/Plotly: {str(e)}"
+        print(f"[PDF] {error_msg}")
+        return None, error_msg
 
 
 def _agregar_grafico(
@@ -483,9 +485,20 @@ def _agregar_grafico(
     ancho_cm_val = ancho / cm
     alto_cm_val = (alto / cm) if alto else None
 
-    resultado = _crear_grafico_png(fig, ancho_cm_val, alto_cm_val)
+    resultado, error_msg = _crear_grafico_png(fig, ancho_cm_val, alto_cm_val)
 
     if resultado is None:
+        estilos = getSampleStyleSheet()
+        estilo_error = ParagraphStyle(
+            "EstiloError",
+            parent=estilos["Normal"],
+            textColor=colors.red,
+            alignment=TA_CENTER,
+            fontSize=10,
+        )
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(f"<b>[No se pudo renderizar el gráfico en PDF]</b><br/>{error_msg}", estilo_error))
+        story.append(Spacer(1, 10))
         return
         
     imagen, png_width, png_height = resultado
@@ -497,7 +510,7 @@ def _agregar_grafico(
         Image(
             imagen,
             width=ancho,
-            height=alto,
+            height=alto_real,  # Corregido: usar alto_real para mantener proporción
             hAlign="CENTER",
         )
     )
