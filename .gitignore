@@ -1,0 +1,36 @@
+# Python / Streamlit
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.env
+
+# Datos
+data/
+
+# Archivos de datos de la aplicacion (CRITICO PARA PRIVACIDAD)
+*.xlsx
+*.xls
+*.csv
+
+# Archivos generados
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.svg
+
+# Archivos temporales de sistema
+.DS_Store
+Thumbs.db
+
+# Configuración IDE
+.vscode/
+.idea/
+
+# Archivos de desarrollo/documentaci�n local
+PROMPT_MAESTRO.md
+REPORTES_ACCESOS_REGLAS.md
+app_cleaned.py
