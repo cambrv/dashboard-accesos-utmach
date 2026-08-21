@@ -81,18 +81,18 @@ def stats_evolucion_resultado(df: pd.DataFrame) -> pd.DataFrame:
     return cruce.sort_values("Fecha")
 
 def stats_dia_semana_resultado(df: pd.DataFrame) -> pd.DataFrame:
-    df_valid = df.dropna(subset=["Dia_Semana"])
+    df_valid = df.dropna(subset=["Dia_Semana_Num"])
     if df_valid.empty:
         return pd.DataFrame()
-    cruce = pd.crosstab(df_valid["Dia_Semana"], df_valid["Resultado"]).reset_index()
-    cruce["Total"] = cruce.drop(columns="Dia_Semana").sum(axis=1)
+    cruce = pd.crosstab(df_valid["Dia_Semana_Num"], df_valid["Resultado"]).reset_index()
+    cruce["Total"] = cruce.drop(columns="Dia_Semana_Num").sum(axis=1)
     
     for col in [RESULTADO_EXITOSO, RESULTADO_DENEGADO, RESULTADO_FALLO_RECONOCIMIENTO, RESULTADO_OTRO]:
         if col not in cruce.columns:
             cruce[col] = 0
             
-    cruce["Dia"] = cruce["Dia_Semana"].map(DIAS_SEMANA_MAP)
-    return cruce.sort_values("Dia_Semana")
+    cruce["Dia"] = cruce["Dia_Semana_Num"].map(DIAS_SEMANA_MAP)
+    return cruce.sort_values("Dia_Semana_Num")
 
 def stats_tipo_usuario_resultado(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -128,14 +128,14 @@ def stats_device_resultado(df: pd.DataFrame) -> pd.DataFrame:
     return cruce.sort_values("Total", ascending=False)
 
 def stats_heatmap_dia_hora(df: pd.DataFrame) -> pd.DataFrame:
-    df_valid = df.dropna(subset=["Dia_Semana", "Hora_Dia"])
+    df_valid = df.dropna(subset=["Dia_Semana_Num", "Hora_Dia"])
     df_valid = df_valid[df_valid["Hora_Dia"] >= 0]
     if df_valid.empty:
         return pd.DataFrame()
     
     pivot = pd.pivot_table(
         df_valid,
-        index="Dia_Semana",
+        index="Dia_Semana_Num",
         columns="Hora_Dia",
         aggfunc="size",
         fill_value=0

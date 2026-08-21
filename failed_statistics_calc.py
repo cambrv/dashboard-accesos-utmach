@@ -36,12 +36,12 @@ def stats_fallos_por_punto(df: pd.DataFrame) -> pd.DataFrame:
     return conteo
 
 def stats_fallos_dia_semana(df: pd.DataFrame) -> pd.DataFrame:
-    df_valid = df.dropna(subset=["Dia_Semana"])
+    df_valid = df.dropna(subset=["Dia_Semana_Num"])
     if df_valid.empty:
         return pd.DataFrame()
-    conteo = df_valid.groupby("Dia_Semana").size().reset_index(name="Eventos")
-    conteo["Dia"] = conteo["Dia_Semana"].map(DIAS_SEMANA_MAP)
-    return conteo
+    conteo = df_valid.groupby("Dia_Semana_Num").size().reset_index(name="Eventos")
+    conteo["Dia"] = conteo["Dia_Semana_Num"].map(DIAS_SEMANA_MAP)
+    return conteo.sort_values("Dia_Semana_Num")
 
 def generar_conclusiones_fallidos(df: pd.DataFrame, stats: dict) -> list:
     """Genera conclusiones específicas para eventos anormales (sin inferir causas)."""
