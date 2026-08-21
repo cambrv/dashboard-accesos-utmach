@@ -63,6 +63,6 @@ def grafico_fallos_por_punto(df_stats: pd.DataFrame) -> go.Figure:
         color_discrete_sequence=[PALETA_PRINCIPAL[2]]
     )
     fig.update_yaxes(categoryorder="total ascending")
-    _aplicar_layout(fig, "Top 15 Puntos con Más Fallos", height=max(400, len(df_top)*35))
+    _aplicar_layout(fig, "Top 15 Puntos con Más Fallos", height=max(400, len(df_plot)*35))
     fig.update_layout(xaxis_title="Eventos", yaxis_title="Punto de Acceso")
     return fig
