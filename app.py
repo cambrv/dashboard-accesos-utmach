@@ -155,9 +155,7 @@ def ejecutar_modo_exitoso():
     # ─── Procesar datos ──────────────────────────────────────────────────
     df, metricas = procesar_datos(df_crudo)
     
-    # ─── Filtrar Tipo_Usuario permitido ──────────────────────────────────
-    tipos_permitidos = ["ESTUDIANTES", "ADMINISTRATIVOS", "DOCENTES"]
-    df = df[df["Tipo_Usuario"].isin(tipos_permitidos)]
+    # (Eliminado el filtro duro de Tipo_Usuario para incluir SIN CLASIFICAR)
 
     # ─── SIDEBAR: Filtros ────────────────────────────────────────────────
     with st.sidebar:
@@ -197,8 +195,9 @@ def ejecutar_modo_exitoso():
         ingreso_sel = st.multiselect(
             "️ Ingreso",
             options=ingreso_opciones,
-            default=ingreso_opciones,
+            default=[],
             key="filtro_ingreso",
+            placeholder="Todos"
         )
 
         # Tipo de usuario
@@ -206,8 +205,9 @@ def ejecutar_modo_exitoso():
         tipo_sel = st.multiselect(
             " Tipo de Usuario",
             options=tipo_opciones,
-            default=tipo_opciones,
+            default=[],
             key="filtro_tipo_usuario",
+            placeholder="Todos"
         )
 
         # Movimiento
@@ -215,8 +215,9 @@ def ejecutar_modo_exitoso():
         mov_sel = st.multiselect(
             " Movimiento",
             options=mov_opciones,
-            default=mov_opciones,
+            default=[],
             key="filtro_movimiento",
+            placeholder="Todos"
         )
 
         # Punto de acceso
@@ -224,9 +225,10 @@ def ejecutar_modo_exitoso():
         punto_sel = st.multiselect(
             " Punto de Acceso",
             options=punto_opciones,
-            default=punto_opciones,
+            default=[],
             format_func=obtener_nombre_amigable,
             key="filtro_punto_acceso",
+            placeholder="Todos"
         )
 
         # Hora
@@ -245,24 +247,33 @@ def ejecutar_modo_exitoso():
 
     # ─── Aplicar filtros ─────────────────────────────────────────────────
     df_filtrado = df.copy()
+    
+    if fecha_inicio and fecha_fin:
+        df_filtrado = df_filtrado[(df_filtrado["Fecha"] >= fecha_inicio) & (df_filtrado["Fecha"] <= fecha_fin)]
+        
+    if ingreso_sel:
+        df_filtrado = df_filtrado[df_filtrado["Ingreso"].isin(ingreso_sel)]
+        
+    if tipo_sel:
+        df_filtrado = df_filtrado[df_filtrado["Tipo_Usuario"].isin(tipo_sel)]
+        
+    if mov_sel:
+        df_filtrado = df_filtrado[df_filtrado["Movimiento"].isin(mov_sel)]
+        
+    if punto_sel:
+        df_filtrado = df_filtrado[df_filtrado["Punto de acceso"].isin(punto_sel)]
+        
     df_filtrado = df_filtrado[
-        (df_filtrado["Fecha"] >= fecha_inicio)
-        & (df_filtrado["Fecha"] <= fecha_fin)
-        & (df_filtrado["Ingreso"].isin(ingreso_sel))
-        & (df_filtrado["Tipo_Usuario"].isin(tipo_sel))
-        & (df_filtrado["Movimiento"].isin(mov_sel))
-        & (df_filtrado["Punto de acceso"].isin(punto_sel))
-        & (df_filtrado["Hora_Dia"] >= hora_rango[0])
-        & (df_filtrado["Hora_Dia"] <= hora_rango[1])
+        (df_filtrado["Hora_Dia"] >= hora_rango[0]) & (df_filtrado["Hora_Dia"] <= hora_rango[1])
     ]
 
     filtros_activos = (
         fecha_inicio != fecha_min
         or fecha_fin != fecha_max
-        or len(ingreso_sel) != len(ingreso_opciones)
-        or len(tipo_sel) != len(tipo_opciones)
-        or len(mov_sel) != len(mov_opciones)
-        or len(punto_sel) != len(punto_opciones)
+        or len(ingreso_sel) > 0
+        or len(tipo_sel) > 0
+        or len(mov_sel) > 0
+        or len(punto_sel) > 0
         or hora_rango != (0, 23)
     )
 
@@ -1103,10 +1114,7 @@ def ejecutar_modo_todos():
     # Procesar
     df_todos, metricas = procesar_datos_todos(df_crudo, mapeo)
     
-    # ─── Filtrar Tipo_Usuario permitido ──────────────────────────────────
-    tipos_permitidos = ["ESTUDIANTES", "ADMINISTRATIVOS", "DOCENTES"]
-    df_todos = df_todos[df_todos["Tipo_Usuario"].isin(tipos_permitidos)]
-    
+    # (Filtro duro de Tipo_Usuario eliminado para permitir SIN CLASIFICAR)
     if df_todos.empty:
         st.warning("️ No se encontraron registros válidos tras el procesamiento.")
         st.stop()
@@ -1137,9 +1145,9 @@ def ejecutar_modo_todos():
         else:
             rango_fechas = ()
             
-        sel_resultados = st.multiselect("Resultado", options=df_todos["Resultado"].unique(), default=df_todos["Resultado"].unique(), key="filt_res")
-        sel_ingreso = st.multiselect("Ingreso", options=df_todos["Ingreso"].unique(), default=df_todos["Ingreso"].unique(), key="filt_ingreso_todos")
-        sel_tipo_usu = st.multiselect("Tipo Usuario", options=df_todos["Tipo_Usuario"].unique(), default=df_todos["Tipo_Usuario"].unique(), key="filt_tipo_usu_todos")
+        sel_resultados = st.multiselect("Resultado", options=df_todos["Resultado"].unique(), default=[], key="filt_res", placeholder="Todos")
+        sel_ingreso = st.multiselect("Ingreso", options=df_todos["Ingreso"].unique(), default=[], key="filt_ingreso_todos", placeholder="Todos")
+        sel_tipo_usu = st.multiselect("Tipo Usuario", options=df_todos["Tipo_Usuario"].unique(), default=[], key="filt_tipo_usu_todos", placeholder="Todos")
         
     # Aplicar filtros
     df_f = df_todos.copy()

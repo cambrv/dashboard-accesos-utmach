@@ -38,7 +38,7 @@ def detectar_columnas_fallidos(df: pd.DataFrame) -> dict:
             
     # Heurística para Tipo de Fallo
     for i, c in enumerate(cols_upper):
-        if any(kw in c for kw in ["FALLO", "MOTIVO", "RESULTADO", "EVENTO", "TYPE", "STATUS", "RAZON", "ERROR", "DESCRIPCI"]):
+        if any(kw in c for kw in ["FALLO", "DENEGADO","MOTIVO", "RESULTADO", "EVENTO", "TYPE", "STATUS", "RAZON", "ERROR", "DESCRIPCI"]):
             mapeo["tipo_fallo"] = cols[i]
             break
             
