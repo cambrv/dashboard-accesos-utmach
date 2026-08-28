@@ -1494,9 +1494,16 @@ def app_protegida():
     import yaml
     from yaml.loader import SafeLoader
 
-    import toml
-    with open('.streamlit/secrets.toml', 'r', encoding='utf-8') as f:
-        config = toml.load(f)
+    # Obtener credenciales desde los secretos de Streamlit
+    # Convertimos a dict estándar para que streamlit-authenticator pueda modificarlo en memoria
+    if hasattr(st.secrets, "to_dict"):
+        config = st.secrets.to_dict()
+    else:
+        config = dict(st.secrets)
+        
+    if "credentials" not in config:
+        st.error("No se encontraron credenciales de acceso configuradas.")
+        st.stop()
 
     authenticator = stauth.Authenticate(
         config['credentials'],
