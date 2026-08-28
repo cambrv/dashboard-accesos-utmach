@@ -201,3 +201,109 @@ def generar_conclusiones_todos(df: pd.DataFrame, tasas: dict, stats: dict) -> li
         conclusiones.append("No se dispone de información suficiente para determinar la franja horaria de mayor flujo.")
         
     return conclusiones
+
+# ─── Funciones de Analítica Avanzada ─────────────────────────────────────────
+
+def calcular_top_usuarios_fallos(df: pd.DataFrame, umbral_fallos: int = 5, umbral_porcentaje: float = 5.0) -> pd.DataFrame:
+    """
+    Calcula el Top 10 de usuarios con mayor cantidad de fallos.
+    Omite 'Desconocido'.
+    """
+    if df.empty:
+        return pd.DataFrame()
+        
+    df_fallos = df[df["Resultado"] == RESULTADO_FALLO_RECONOCIMIENTO]
+    if df_fallos.empty:
+        return pd.DataFrame()
+        
+    df_fallos = df_fallos[~df_fallos["Persona"].str.contains("Desconocido", case=False, na=False)]
+    
+    total_fallos_periodo = len(df_fallos)
+    if total_fallos_periodo == 0:
+        return pd.DataFrame()
+        
+    # Agrupar por persona y departamento
+    conteo = df_fallos.groupby(["Persona", "Departamento"]).agg(
+        Cantidad_Fallos=("Resultado", "count"),
+        Puntos_Acceso=("Punto de acceso", lambda x: ", ".join(x.unique()[:3])) # Hasta 3 puntos
+    ).reset_index()
+    
+    conteo = conteo.sort_values(by="Cantidad_Fallos", ascending=False).head(10)
+    conteo["Porcentaje_Total"] = (conteo["Cantidad_Fallos"] / total_fallos_periodo * 100).round(2)
+    
+    # Determinar si superan umbral
+    conteo["Alerta"] = (conteo["Cantidad_Fallos"] > umbral_fallos) | (conteo["Porcentaje_Total"] > umbral_porcentaje)
+    
+    return conteo
+
+def comparar_periodos(df_actual: pd.DataFrame, df_anterior: pd.DataFrame) -> dict:
+    """
+    Compara las métricas básicas de dos dataframes.
+    """
+    tasas_actual = calcular_tasas_generales(df_actual)
+    tasas_anterior = calcular_tasas_generales(df_anterior)
+    
+    def _calc_variacion(val_act, val_ant):
+        if val_ant == 0:
+            return None if val_act == 0 else 100.0 # infinito o 100% como representación visual
+        return round(((val_act - val_ant) / val_ant) * 100, 2)
+        
+    comparacion = {}
+    metricas_clave = ["total", "exitosos", "denegados", "fallos_rec"]
+    
+    for m in metricas_clave:
+        act = tasas_actual.get(m, 0)
+        ant = tasas_anterior.get(m, 0)
+        comparacion[m] = {
+            "actual": act,
+            "anterior": ant,
+            "diferencia": act - ant,
+            "variacion_pct": _calc_variacion(act, ant)
+        }
+        
+    return comparacion
+
+def detectar_anomalias_avanzadas(df: pd.DataFrame) -> list:
+    """
+    Motor de detección de anomalías basado en datos históricos o heurística.
+    Retorna lista de diccionarios con la anomalía detectada.
+    """
+    anomalias = []
+    if df.empty:
+        return anomalias
+        
+    # 1. Accesos fuera de horario (23:00 a 05:00)
+    df_nocturno = df[(df["Hora_Dia"] >= 23) | (df["Hora_Dia"] < 5)]
+    if not df_nocturno.empty:
+        total_nocturnos = len(df_nocturno)
+        anomalias.append({
+            "tipo": "Accesos fuera de horario",
+            "fecha_hora": "23:00 - 05:00",
+            "punto_acceso": "Varios" if df_nocturno["Punto de acceso"].nunique() > 1 else df_nocturno["Punto de acceso"].iloc[0],
+            "magnitud": f"{total_nocturnos} eventos",
+            "referencia": "Se esperaban 0",
+            "severidad": "WARNING",
+            "descripcion": "Se registraron eventos de acceso en horarios no habituales.",
+            "data": df_nocturno
+        })
+        
+    # 2. Concentración de fallos en un solo punto
+    df_fallos = df[df["Resultado"] == RESULTADO_FALLO_RECONOCIMIENTO]
+    if len(df_fallos) > 20:
+        conteo_puntos = df_fallos["Punto de acceso"].value_counts()
+        top_punto = conteo_puntos.index[0]
+        top_valor = conteo_puntos.iloc[0]
+        pct = top_valor / len(df_fallos)
+        
+        if pct > 0.5: # Si concentra más del 50% de los fallos
+            anomalias.append({
+                "tipo": "Concentración de Fallos",
+                "fecha_hora": "Periodo actual",
+                "punto_acceso": top_punto,
+                "magnitud": f"{top_valor} fallos ({int(pct*100)}%)",
+                "referencia": "< 50%",
+                "severidad": "CRITICAL",
+                "descripcion": "Posible daño en el sensor biométrico de este torniquete."
+            })
+            
+    return anomalias

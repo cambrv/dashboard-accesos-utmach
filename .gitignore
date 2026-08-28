@@ -35,3 +35,6 @@ PROMPT_MAESTRO.md
 REPORTES_ACCESOS_REGLAS.md
 README.md
 app_cleaned.py
+
+# Configuracion de Streamlit
+.streamlit/secrets.toml

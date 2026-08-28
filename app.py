@@ -155,6 +155,9 @@ def ejecutar_modo_exitoso():
     # ─── Procesar datos ──────────────────────────────────────────────────
     df, metricas = procesar_datos(df_crudo)
     
+    # Excluir la categoría '25 DE JUNIO' del tipo de usuario / departamento
+    df = df[df["Tipo_Usuario"] != "25 DE JUNIO"]
+    
     # (Eliminado el filtro duro de Tipo_Usuario para incluir SIN CLASIFICAR)
 
     # ─── SIDEBAR: Filtros ────────────────────────────────────────────────
@@ -992,6 +995,9 @@ def ejecutar_modo_fallidos():
         
     df, metricas = procesar_datos_fallidos(df_crudo, mapeo)
     
+    # Excluir la categoría '25 DE JUNIO' del tipo de usuario / departamento
+    df = df[df["Tipo_Usuario"] != "25 DE JUNIO"]
+    
     # ─── SIDEBAR: Filtros para Eventos Anormales ───
     with st.sidebar:
         st.markdown("## <i class='bi bi-funnel'></i> Filtros Eventos Anormales", unsafe_allow_html=True)
@@ -1114,6 +1120,9 @@ def ejecutar_modo_todos():
     # Procesar
     df_todos, metricas = procesar_datos_todos(df_crudo, mapeo)
     
+    # Excluir la categoría '25 DE JUNIO' del tipo de usuario / departamento
+    df_todos = df_todos[df_todos["Tipo_Usuario"] != "25 DE JUNIO"]
+    
     # (Filtro duro de Tipo_Usuario eliminado para permitir SIN CLASIFICAR)
     if df_todos.empty:
         st.warning("️ No se encontraron registros válidos tras el procesamiento.")
@@ -1166,6 +1175,23 @@ def ejecutar_modo_todos():
         
     # Calcular estadísticas nuevas
     tasas = ats.calcular_tasas_generales(df_f)
+    # --- Cálculos de Analítica Avanzada ---
+    top_usuarios_fallos = ats.calcular_top_usuarios_fallos(df_f)
+    anomalias_avanzadas = ats.detectar_anomalias_avanzadas(df_f)
+    
+    # Intentar calcular periodo anterior
+    comparacion_periodos = {}
+    if len(rango_fechas) == 2 and (rango_fechas[1] - rango_fechas[0]).days > 0:
+        dias_diferencia = (rango_fechas[1] - rango_fechas[0]).days + 1
+        fecha_fin_anterior = rango_fechas[0] - pd.Timedelta(days=1)
+        fecha_inicio_anterior = fecha_fin_anterior - pd.Timedelta(days=dias_diferencia - 1)
+        
+        df_anterior = df_todos.copy()
+        df_anterior = df_anterior[(df_anterior["Fecha"] >= fecha_inicio_anterior) & (df_anterior["Fecha"] <= fecha_fin_anterior)]
+        if not df_anterior.empty:
+            comparacion_periodos = ats.comparar_periodos(df_f, df_anterior)
+    # --------------------------------------
+
     stats_nuevas = {
         "resultados": ats.stats_resultados(df_f),
         "cruce_ingreso": ats.stats_cruce_ingreso_resultado(df_f),
@@ -1176,7 +1202,10 @@ def ejecutar_modo_todos():
         "cruce_punto": ats.stats_punto_acceso_resultado(df_f),
         "cruce_device": ats.stats_device_resultado(df_f),
         "heatmap": ats.stats_heatmap_dia_hora(df_f),
-        "anomalias": ats.stats_comportamiento_anormal(df_f)
+        "anomalias": ats.stats_comportamiento_anormal(df_f),
+        "top_fallos": top_usuarios_fallos,
+        "anomalias_avanzadas": anomalias_avanzadas,
+        "comparacion_periodos": comparacion_periodos
     }
     conclusiones = ats.generar_conclusiones_todos(df_f, tasas, stats_nuevas)
     
@@ -1211,6 +1240,7 @@ def ejecutar_modo_todos():
         "Puntos de Acceso",
         "Resultados",
         "Frecuencia",
+        "Analítica Avanzada",
         "Calidad de Datos"
     ])
     
@@ -1296,6 +1326,100 @@ def ejecutar_modo_todos():
         st.plotly_chart(grafico_frecuencia(stats_base["frecuencia"]), use_container_width=True)
 
     with tabs[8]:
+        mostrar_seccion("Analítica Avanzada e Inteligencia")
+        
+        # 1. Comparación
+        if stats_nuevas["comparacion_periodos"]:
+            st.subheader("Comparativa vs Periodo Anterior Equivalente")
+            cols_comp = st.columns(4)
+            for i, (k, v) in enumerate(stats_nuevas["comparacion_periodos"].items()):
+                with cols_comp[i % 4]:
+                    st.metric(
+                        label=k.capitalize().replace("_", " "), 
+                        value=f"{v['actual']:,}", 
+                        delta=f"{v['variacion_pct']}%", 
+                        delta_color="inverse" if k in ["denegados", "fallos_rec"] else "normal"
+                    )
+            st.markdown("---")
+            
+        # 2. Anomalías
+        st.subheader("Detección de Anomalías")
+        if stats_nuevas["anomalias_avanzadas"]:
+            for anomalia in stats_nuevas["anomalias_avanzadas"]:
+                if anomalia["severidad"] == "CRITICAL":
+                    st.error(f"🚨 **{anomalia['tipo']}**: {anomalia['descripcion']} (Punto: {anomalia['punto_acceso']}) - {anomalia['magnitud']}")
+                else:
+                    st.warning(f"⚠️ **{anomalia['tipo']}**: {anomalia['descripcion']} (Punto: {anomalia['punto_acceso']}) - {anomalia['magnitud']}")
+                
+                # Check if raw data is provided
+                if "data" in anomalia and not anomalia["data"].empty:
+                    with st.expander(f"Ver lista de {anomalia['tipo']}"):
+                        columnas_mostrar = ["Fecha", "Hora_Dia", "Persona", "Departamento", "Punto de acceso", "Resultado"]
+                        # Filtran solo las columnas que existan para no romper en caso de faltantes
+                        columnas = [c for c in columnas_mostrar if c in anomalia["data"].columns]
+                        df_mostrar = anomalia["data"][columnas].copy()
+                        
+                        if "Hora_Dia" in df_mostrar.columns:
+                            df_mostrar["Hora_Dia"] = df_mostrar["Hora_Dia"].apply(lambda x: f"{int(x):02d}:00" if pd.notnull(x) and x != -1 else "N/A")
+                            df_mostrar = df_mostrar.rename(columns={"Hora_Dia": "Hora"})
+                            
+                        st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+        else:
+            st.success("✅ No se detectaron anomalías severas en el periodo.")
+            
+        st.markdown("---")
+            
+        # 3. Top Fallos
+        st.subheader("Top 10 Usuarios Recurrentes con Fallos")
+        if not stats_nuevas["top_fallos"].empty:
+            df_top = stats_nuevas["top_fallos"]
+            st.dataframe(
+                df_top[["Persona", "Departamento", "Cantidad_Fallos", "Porcentaje_Total", "Puntos_Acceso"]].style.format({"Porcentaje_Total": "{:.2f}%"}), 
+                use_container_width=True, hide_index=True
+            )
+            if df_top["Alerta"].any():
+                st.warning("⚠️ Se recomienda revisar el registro biométrico o considerar un nuevo enrolamiento para los usuarios marcados que superan el umbral de fallos.")
+        else:
+            st.info("No hay usuarios con fallos recurrentes en este periodo.")
+            
+        st.markdown("---")
+        
+        # 4. Buscador de Personas
+        st.subheader("Buscador de Personas")
+        lista_personas = df_f[~df_f["Persona"].str.contains("Desconocido", case=False, na=False)]["Persona"].unique()
+        lista_personas = sorted([str(p) for p in lista_personas if p])
+        
+        persona_seleccionada = st.selectbox(
+            "Seleccione o escriba el nombre de una persona para ver su historial:", 
+            options=[""] + lista_personas, 
+            index=0, 
+            format_func=lambda x: "--- Escriba para buscar ---" if x == "" else x
+        )
+        
+        if persona_seleccionada:
+            df_persona = df_f[df_f["Persona"] == persona_seleccionada]
+            
+            c_p1, c_p2, c_p3, c_p4 = st.columns(4)
+            with c_p1:
+                st.metric("Total Registros", len(df_persona))
+            with c_p2:
+                exitosos = len(df_persona[df_persona["Resultado"] == "Exitoso"])
+                st.metric("Accesos Exitosos", exitosos)
+            with c_p3:
+                fallos = len(df_persona[df_persona["Resultado"] == "Fallo de reconocimiento"])
+                st.metric("Fallos Biométricos", fallos)
+            with c_p4:
+                denegados = len(df_persona[df_persona["Resultado"] == "Denegado"])
+                st.metric("Accesos Denegados", denegados)
+                
+            st.markdown(f"**Departamento:** {', '.join(df_persona['Departamento'].unique())}")
+            
+            conteo_ingreso = df_persona["Ingreso"].value_counts()
+            ferroviaria = conteo_ingreso.get("Ferroviaria", 0)
+            junio25 = conteo_ingreso.get("25 de Junio", 0)
+            st.markdown(f"**Entradas utilizadas:** Ferroviaria ({ferroviaria}), 25 de Junio ({junio25})")
+
+    with tabs[9]:
         mostrar_seccion("Calidad de Datos")
         col_q1, col_q2, col_q3 = st.columns(3)
         with col_q1:
@@ -1365,5 +1489,43 @@ def main():
     else:
         ejecutar_modo_todos()
 
+def app_protegida():
+    import streamlit_authenticator as stauth
+    import yaml
+    from yaml.loader import SafeLoader
+
+    import toml
+    with open('.streamlit/secrets.toml', 'r', encoding='utf-8') as f:
+        config = toml.load(f)
+
+    authenticator = stauth.Authenticate(
+        config['credentials'],
+        config['cookie']['name'],
+        config['cookie']['key'],
+        config['cookie']['expiry_days']
+    )
+
+    # Render login widget
+    authenticator.login()
+
+    if st.session_state["authentication_status"]:
+        with st.sidebar:
+            st.markdown(f"Bienvenido/a **{st.session_state['name']}**")
+            authenticator.logout('Cerrar sesión', 'main')
+            st.markdown("---")
+        
+        # Determine role from secrets
+        for username, user_info in config['credentials']['usernames'].items():
+            if username == st.session_state["username"]:
+                st.session_state["rol"] = user_info.get("role", "viewer")
+                break
+                
+        # Run main app
+        main()
+    elif st.session_state["authentication_status"] is False:
+        st.error('Usuario o contraseña incorrectos')
+    elif st.session_state["authentication_status"] is None:
+        st.warning('Por favor ingrese su usuario y contraseña')
+
 if __name__ == "__main__":
-    main()
+    app_protegida()
