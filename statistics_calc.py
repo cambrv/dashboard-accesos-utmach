@@ -421,14 +421,14 @@ def generar_conclusiones(df: pd.DataFrame, metricas: dict) -> list[str]:
     empate_hora = (hora_conteo == eventos_hora_max).sum() > 1
     if empate_hora:
         horas_empatadas = hora_conteo[hora_conteo == eventos_hora_max].index.tolist()
-        horas_str = ", ".join([f"{h:02d}:00" for h in horas_empatadas])
+        horas_str = ", ".join([f"{int(h)}:00–{(int(h)+1)%24}:00" for h in horas_empatadas])
         conclusiones.append(
             f"Se observó empate en las horas de mayor flujo: **{horas_str}** "
             f"con **{eventos_hora_max:,}** eventos cada una."
         )
     else:
         conclusiones.append(
-            f"El mayor volumen de eventos se registró a las **{hora_max:02d}:00** "
+            f"El mayor volumen de eventos se registró en el horario de **{int(hora_max)}:00–{(int(hora_max)+1)%24}:00** "
             f"con **{eventos_hora_max:,}** eventos."
         )
 

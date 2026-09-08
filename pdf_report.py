@@ -452,8 +452,7 @@ def _crear_grafico_png(fig, ancho_cm=None, alto_cm=None, scale=2):
             format="png",
             width=width,
             height=height,
-            scale=scale,
-            engine="kaleido"
+            scale=scale
         )
 
         return (io.BytesIO(imagen), width, height), None
@@ -1164,13 +1163,13 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("ingreso"),
-        alto=8.5 * cm,
+        alto=9.0 * cm,
     )
 
     _agregar_grafico(
         story,
         graficos.get("contraste_ingresos"),
-        alto=8.0 * cm,
+        alto=9.0 * cm,
     )
 
     story.append(PageBreak())
@@ -1189,19 +1188,19 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("entradas_salidas"),
-        alto=8.0 * cm,
+        alto=9.0 * cm,
     )
 
     _agregar_grafico(
         story,
         graficos.get("entradas_salidas_hora"),
-        alto=8.0 * cm,
+        alto=9.0 * cm,
     )
 
     _agregar_grafico(
         story,
         graficos.get("entradas_salidas_ingreso"),
-        alto=7.5 * cm,
+        alto=9.0 * cm,
     )
 
     story.append(PageBreak())
@@ -1220,13 +1219,13 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("flujo_hora"),
-        alto=8.2 * cm,
+        alto=9.0 * cm,
     )
 
     _agregar_grafico(
         story,
         graficos.get("ingreso_hora"),
-        alto=8.2 * cm,
+        alto=9.0 * cm,
     )
 
     story.append(PageBreak())
@@ -1255,7 +1254,7 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("heatmap_punto_hora"),
-        alto=8.0 * cm,
+        alto=9.0 * cm,
         df_referencia=stats.get("heatmap_punto_hora"),
         mostrar_abreviaturas=True,
     )
@@ -1263,7 +1262,7 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("heatmap_dia_hora"),
-        alto=7.0 * cm,
+        alto=9.0 * cm,
     )
 
     story.append(PageBreak())
@@ -1282,13 +1281,13 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("flujo_diario"),
-        alto=8.5 * cm,
+        alto=9.0 * cm,
     )
 
     _agregar_grafico(
         story,
         graficos.get("flujo_diario_ingreso"),
-        alto=8.0 * cm,
+        alto=9.0 * cm,
     )
 
     story.append(PageBreak())
@@ -1307,13 +1306,13 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("dia_semana"),
-        alto=8.0 * cm,
+        alto=9.0 * cm,
     )
 
     _agregar_grafico(
         story,
         graficos.get("heatmap_dia_hora"),
-        alto=7.5 * cm,
+        alto=9.0 * cm,
     )
 
     story.append(PageBreak())
@@ -1332,13 +1331,13 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("tipo_usuario"),
-        alto=7.5 * cm,
+        alto=9.0 * cm,
     )
 
     _agregar_grafico(
         story,
         graficos.get("tipo_usuario_ingreso"),
-        alto=7.5 * cm,
+        alto=9.0 * cm,
     )
 
     story.append(PageBreak())
@@ -1357,7 +1356,7 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("flujo_punto_acceso"),
-        alto=7.5 * cm,
+        alto=9.0 * cm,
         df_referencia=stats.get("flujo_punto_acceso"),
         mostrar_abreviaturas=False,
     )
@@ -1365,7 +1364,7 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("punto_tipo_usuario"),
-        alto=7.5 * cm,
+        alto=9.0 * cm,
         df_referencia=stats.get("punto_tipo_usuario"),
         mostrar_abreviaturas=False,
     )
@@ -1386,7 +1385,7 @@ def exportar_reporte_pdf(
     _agregar_grafico(
         story,
         graficos.get("frecuencia"),
-        alto=8.0 * cm,
+        alto=9.0 * cm,
     )
 
     story.append(

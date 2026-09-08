@@ -98,3 +98,9 @@ COLORES_RESULTADO = {
     RESULTADO_FALLO_RECONOCIMIENTO: "#ff7f0e", # Naranja (Fallo)
     RESULTADO_OTRO: "#7f7f7f", # Gris
 }
+
+# ─── Configuración Vehicular (LPR) ───────────────────────────────────────────
+LPR_KEYWORDS_CAMARA = ["ING", "SAL", "VEH", "LPR"]
+LPR_DIRECCION_ENTRADA = "ENTRADA"
+LPR_DIRECCION_SALIDA = "SALIDA"
+LPR_DIRECCION_OTRA = "OTRA"

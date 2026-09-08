@@ -82,12 +82,12 @@ def grafico_flujo_hora(df_stats: pd.DataFrame) -> go.Figure:
     """Gráfico de barras de flujo por hora del día."""
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=[f"{h:02d}:00" for h in df_stats["Hora"]],
+        x=[f"{int(h)}:00–{(int(h)+1)%24}:00" for h in df_stats["Hora"]],
         y=df_stats["Eventos"],
         marker_color="#2E86C1",
         text=df_stats["Eventos"].apply(lambda x: f"{x:,}"),
         textposition="outside",
-        hovertemplate="Hora: %{x}<br>Eventos: %{y:,}<extra></extra>",
+        hovertemplate="Horario: %{x}<br>Eventos: %{y:,}<extra></extra>",
     ))
     _aplicar_layout(fig, "Distribución de Eventos por Hora del Día")
     fig.update_layout(xaxis_title="Hora", yaxis_title="Eventos")
@@ -103,12 +103,12 @@ def grafico_heatmap_punto_hora(pivot: pd.DataFrame) -> go.Figure:
     
     fig = go.Figure(data=go.Heatmap(
         z=pivot_plot.values,
-        x=[f"{h:02d}:00" for h in pivot_plot.columns],
+        x=[f"{int(h)}:00–{(int(h)+1)%24}:00" for h in pivot_plot.columns],
         y=pivot_plot.index.tolist(),
         colorscale="Blues",
         hovertemplate=(
             "Punto: %{y}<br>"
-            "Hora: %{x}<br>"
+            "Horario: %{x}<br>"
             "Eventos: %{z:,}<extra></extra>"
         ),
         colorbar=dict(title="Eventos"),
@@ -139,12 +139,12 @@ def grafico_entradas_salidas_hora(df_stats: pd.DataFrame) -> go.Figure:
     for mov in df_stats["Movimiento"].unique():
         sub = df_stats[df_stats["Movimiento"] == mov]
         fig.add_trace(go.Scatter(
-            x=[f"{h:02d}:00" for h in sub["Hora_Dia"]],
+            x=[f"{int(h)}:00–{(int(h)+1)%24}:00" for h in sub["Hora_Dia"]],
             y=sub["Eventos"],
             name=mov,
             mode="lines+markers",
             line=dict(color=COLORES_MOVIMIENTO.get(mov, "#9467bd"), width=2),
-            hovertemplate="Hora: %{x}<br>Eventos: %{y:,}<extra></extra>",
+            hovertemplate="Horario: %{x}<br>Eventos: %{y:,}<extra></extra>",
         ))
     _aplicar_layout(fig, "Entradas vs Salidas por Hora")
     fig.update_layout(xaxis_title="Hora", yaxis_title="Eventos")
@@ -301,12 +301,12 @@ def grafico_heatmap_dia_hora(pivot: pd.DataFrame) -> go.Figure:
     """Heatmap de día de semana × hora."""
     fig = go.Figure(data=go.Heatmap(
         z=pivot.values,
-        x=[f"{h:02d}:00" for h in pivot.columns],
+        x=[f"{int(h)}:00–{(int(h)+1)%24}:00" for h in pivot.columns],
         y=pivot.index.tolist(),
         colorscale="YlOrRd",
         hovertemplate=(
             "Día: %{y}<br>"
-            "Hora: %{x}<br>"
+            "Horario: %{x}<br>"
             "Eventos: %{z:,}<extra></extra>"
         ),
         colorbar=dict(title="Eventos"),
@@ -322,12 +322,12 @@ def grafico_ingreso_hora(df_stats: pd.DataFrame) -> go.Figure:
     for ingreso in df_stats["Ingreso"].unique():
         sub = df_stats[df_stats["Ingreso"] == ingreso]
         fig.add_trace(go.Scatter(
-            x=[f"{h:02d}:00" for h in sub["Hora_Dia"]],
+            x=[f"{int(h)}:00–{(int(h)+1)%24}:00" for h in sub["Hora_Dia"]],
             y=sub["Eventos"],
             name=ingreso,
             mode="lines+markers",
             line=dict(color=COLORES_INGRESO.get(ingreso, "#7f7f7f"), width=2.5),
-            hovertemplate=f"{ingreso}<br>Hora: %{{x}}<br>Eventos: %{{y:,}}<extra></extra>",
+            hovertemplate=f"{ingreso}<br>Horario: %{{x}}<br>Eventos: %{{y:,}}<extra></extra>",
         ))
     _aplicar_layout(fig, "Comparación de Flujo Horario por Ingreso")
     fig.update_layout(xaxis_title="Hora", yaxis_title="Eventos")
