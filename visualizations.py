@@ -8,7 +8,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
-from config import COLORES_INGRESO, COLORES_MOVIMIENTO, DIAS_SEMANA_ORDEN
+from config import COLORES_INGRESO, COLORES_CONSOLIDADO, COLORES_MOVIMIENTO, DIAS_SEMANA_ORDEN
 
 
 # ─── Paleta de colores institucional ────────────────────────────────────────
@@ -107,13 +107,42 @@ def grafico_heatmap_punto_hora(pivot: pd.DataFrame) -> go.Figure:
         y=pivot_plot.index.tolist(),
         colorscale="Blues",
         hovertemplate=(
-            "Punto: %{y}<br>"
+            "Ingreso: %{y}<br>"
             "Horario: %{x}<br>"
             "Eventos: %{z:,}<extra></extra>"
         ),
-        colorbar=dict(title="Eventos"),
     ))
-    _aplicar_layout(fig, "Flujo por Punto de Acceso y Hora", height=max(500, len(pivot) * 32))
+    _aplicar_layout(fig, "Flujo de Registros Biométricos por Tipo de Ingreso y Hora", height=max(500, len(pivot) * 32))
+    fig.update_layout(xaxis_title="Hora del Día", yaxis_title="Tipo de Ingreso")
+    return fig
+
+def grafico_heatmap_consolidado_hora(pivot: pd.DataFrame) -> go.Figure:
+    """Heatmap consolidado: Peatonal vs Vehicular."""
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot.values,
+        x=[f"{int(h)}:00–{(int(h)+1)%24}:00" for h in pivot.columns],
+        y=pivot.index.tolist(),
+        colorscale="Oranges",
+        hovertemplate=(
+            "Flujo: %{y}<br>"
+            "Horario: %{x}<br>"
+            "Eventos: %{z:,}<extra></extra>"
+        ),
+    ))
+    _aplicar_layout(fig, "Flujo consolidado por hora: Peatonal vs. Vehicular", height=400)
+    fig.update_layout(
+        xaxis_title="Hora del Día", 
+        yaxis_title="Tipo de Movilidad"
+    )
+    # Agregar nota explicativa como anotación
+    fig.add_annotation(
+        text="<b>Nota:</b> El flujo vehicular consolida los registros vehiculares identificados mediante terminal biométrico y reconocimiento LPR.",
+        xref="paper", yref="paper",
+        x=0, y=-0.25,
+        showarrow=False,
+        font=dict(size=11, color="gray"),
+        align="left"
+    )
     return fig
 
 
@@ -182,8 +211,35 @@ def grafico_ingreso(df_stats: pd.DataFrame) -> go.Figure:
         textposition="outside",
         hovertemplate="Ingreso: %{x}<br>Eventos: %{y:,}<extra></extra>",
     ))
-    _aplicar_layout(fig, "Flujo por Ingreso")
-    fig.update_layout(xaxis_title="Ingreso", yaxis_title="Eventos")
+    _aplicar_layout(fig, "Flujo por Categoría de Acceso")
+    fig.update_layout(xaxis_title="Categoría de Acceso", yaxis_title="Eventos")
+    return fig
+
+def grafico_flujo_consolidado(df_stats: pd.DataFrame) -> go.Figure:
+    """Gráfico de barras de flujo consolidado (Peatonal vs Vehicular)."""
+    fig = go.Figure()
+    fig.add_trace(go.Bar(
+        x=df_stats["Tipo_Flujo_Consolidado"],
+        y=df_stats["Eventos"],
+        marker_color=[COLORES_CONSOLIDADO.get(c, "#7f7f7f") for c in df_stats["Tipo_Flujo_Consolidado"]],
+        text=df_stats.apply(
+            lambda r: f"{r['Eventos']:,} ({r.get('Porcentaje', 0)}%)", axis=1
+        ),
+        textposition="outside",
+        hovertemplate="Flujo: %{x}<br>Eventos: %{y:,}<extra></extra>",
+    ))
+    _aplicar_layout(fig, "Flujo consolidado: Peatonal vs. Vehicular")
+    fig.update_layout(xaxis_title="Tipo de Movilidad", yaxis_title="Eventos")
+    
+    # Agregar nota explicativa como anotación
+    fig.add_annotation(
+        text="<b>Nota:</b> Vehicular consolida registros obtenidos mediante terminal biométrico vehicular y LPR.",
+        xref="paper", yref="paper",
+        x=0, y=-0.25,
+        showarrow=False,
+        font=dict(size=11, color="gray"),
+        align="left"
+    )
     return fig
 
 

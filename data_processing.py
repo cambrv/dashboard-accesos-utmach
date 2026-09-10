@@ -8,10 +8,6 @@ import pandas as pd
 import numpy as np
 import streamlit as st
 from config import (
-    INGRESO_FERROVIARIA_KEYWORD,
-    INGRESO_FERROVIARIA,
-    INGRESO_25_JUNIO,
-    INGRESO_NO_CLASIFICADO,
     MOVIMIENTO_ENTRADA,
     MOVIMIENTO_SALIDA,
     MOVIMIENTO_OTRO,
@@ -19,8 +15,8 @@ from config import (
     SEPARADOR_DEPARTAMENTO,
     DIAS_SEMANA_MAP,
     FORMATO_INTERVALO,
-    PATRONES_25_JUNIO,
 )
+from access_names import clasificar_acceso_funcional, obtener_clasificacion_completa
 
 
 @st.cache_data(show_spinner="Procesando datos...")
@@ -61,7 +57,15 @@ def procesar_datos(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     df["Tipo_Usuario"] = df["Departamento"].apply(_extraer_tipo_usuario)
 
     # ─── 4. Determinar Ingreso desde Punto de acceso ────────────────────
-    df["Ingreso"] = df["Punto de acceso"].apply(_clasificar_ingreso)
+    # Extraer las 4 dimensiones requeridas
+    clasificaciones = df["Punto de acceso"].apply(lambda x: obtener_clasificacion_completa(x, es_lpr=False))
+    df["Categoria_Ingreso"] = clasificaciones.apply(lambda x: x["Categoria_Ingreso"])
+    df["Tipo_Flujo_Consolidado"] = clasificaciones.apply(lambda x: x["Tipo_Flujo_Consolidado"])
+    df["Mecanismo_Registro"] = clasificaciones.apply(lambda x: x["Mecanismo_Registro"])
+    df["Ubicacion_Ingreso"] = clasificaciones.apply(lambda x: x["Ubicacion_Ingreso"])
+    
+    # Mantener "Ingreso" por compatibilidad, pero con la categoría detallada (es equivalente a Categoria_Ingreso)
+    df["Ingreso"] = df["Categoria_Ingreso"]
 
     # ─── 5. Determinar Movimiento (Entrada/Salida/Otro) ─────────────────
     df["Movimiento"] = df["Punto de acceso"].apply(_clasificar_movimiento)
@@ -88,8 +92,8 @@ def procesar_datos(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     metricas["dias_unicos"] = dias_unicos
     metricas["promedio_diario"] = round(len(df) / dias_unicos, 2) if dias_unicos > 0 else 0
 
-    # Accesos no clasificados
-    no_clasificados = df[df["Ingreso"] == INGRESO_NO_CLASIFICADO]["Punto de acceso"].unique().tolist()
+    # Accesos no clasificados o atípicos
+    no_clasificados = df[df["Ingreso"] == "Otros registros"]["Punto de acceso"].unique().tolist()
     metricas["accesos_no_clasificados"] = no_clasificados
 
     return df, metricas
@@ -108,23 +112,7 @@ def _extraer_tipo_usuario(departamento) -> str:
     return tipo if tipo else TIPO_USUARIO_SIN_CLASIFICAR
 
 
-def _clasificar_ingreso(punto_acceso) -> str:
-    """
-    Clasifica el ingreso a partir del punto de acceso.
-    Si contiene 'FER' → Ferroviaria
-    Si contiene patrones conocidos de 25 de Junio → 25 de Junio
-    Otros → No clasificado
-    """
-    if pd.isna(punto_acceso):
-        return INGRESO_NO_CLASIFICADO
-    acceso_upper = str(punto_acceso).upper()
-    if INGRESO_FERROVIARIA_KEYWORD.upper() in acceso_upper:
-        return INGRESO_FERROVIARIA
-    # Verificar patrones de 25 de Junio
-    for patron in PATRONES_25_JUNIO:
-        if patron.upper() in acceso_upper:
-            return INGRESO_25_JUNIO
-    return INGRESO_NO_CLASIFICADO
+
 
 
 def _clasificar_movimiento(punto_acceso) -> str:

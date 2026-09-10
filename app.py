@@ -43,6 +43,8 @@ from statistics_calc import (
     punto_movimiento,
     frecuencia_utilizacion,
     generar_conclusiones,
+    flujo_consolidado,
+    flujo_consolidado_hora,
 )
 from access_names import obtener_nombre_amigable
 from visualizations import (
@@ -60,6 +62,8 @@ from visualizations import (
     grafico_ingreso_hora,
     grafico_punto_tipo_usuario,
     grafico_frecuencia,
+    grafico_flujo_consolidado,
+    grafico_heatmap_consolidado_hora,
 )
 from export import exportar_dataset_filtrado, exportar_reporte_completo
 from pdf_report import exportar_reporte_pdf, construir_graficos_reporte
@@ -538,7 +542,7 @@ def ejecutar_modo_exitoso():
     # PESTAÑAS PRINCIPALES
     # ═════════════════════════════════════════════════════════════════════
 
-    tabs = st.tabs([
+    tab_acceso, tab_horario, tab_diario, tab_io, tab_usuario, tab_ingreso, tab_heatmaps, tab_frecuencia, tab_conclusiones, tab_calidad = st.tabs([
         "Flujo por Acceso",
         "Flujo Horario",
         "Flujo Diario",
@@ -552,7 +556,7 @@ def ejecutar_modo_exitoso():
     ])
 
     # ─── TAB 1: Flujo por punto de acceso ────────────────────────────────
-    with tabs[0]:
+    with tab_acceso:
         mostrar_seccion("Flujo por Punto de Acceso")
         st.markdown("Cada punto de acceso con su volumen de eventos, porcentaje, ingreso y movimiento.")
 
@@ -586,7 +590,7 @@ def ejecutar_modo_exitoso():
             )
 
     # ─── TAB 2: Flujo horario ────────────────────────────────────────────
-    with tabs[1]:
+    with tab_horario:
         mostrar_seccion("Flujo por Hora del Día")
 
         df_flujo_hora = flujo_por_hora(df_filtrado)
@@ -660,7 +664,7 @@ def ejecutar_modo_exitoso():
                 pd.DataFrame(pico_punto_data).style.format({"Eventos en Hora Pico": "{:,}"}), use_container_width=True)
 
     # ─── TAB 3: Flujo diario ────────────────────────────────────────────
-    with tabs[2]:
+    with tab_diario:
         mostrar_seccion("Flujo Diario")
 
         df_diario = flujo_diario(df_filtrado)
@@ -711,7 +715,7 @@ def ejecutar_modo_exitoso():
         )
 
     # ─── TAB 4: Entradas vs Salidas ─────────────────────────────────────
-    with tabs[3]:
+    with tab_io:
         mostrar_seccion("Entradas vs Salidas")
 
         # General
@@ -761,7 +765,7 @@ def ejecutar_modo_exitoso():
         )
 
     # ─── TAB 5: Tipo de usuario ─────────────────────────────────────────
-    with tabs[4]:
+    with tab_usuario:
         mostrar_seccion("Flujo por Tipo de Usuario")
         st.markdown("Categorías reales encontradas en los datos (sin asumir categorías predefinidas).")
 
@@ -804,7 +808,7 @@ def ejecutar_modo_exitoso():
         )
 
     # ─── TAB 6: Ingreso ──────────────────────────────────────────────────
-    with tabs[5]:
+    with tab_ingreso:
         mostrar_seccion("Flujo por Ingreso")
 
         df_ingreso_stats = flujo_por_ingreso(df_filtrado)
@@ -843,7 +847,7 @@ def ejecutar_modo_exitoso():
                 st.markdown(f"- `{acceso}`")
 
     # ─── TAB 7: Heatmaps ────────────────────────────────────────────────
-    with tabs[6]:
+    with tab_heatmaps:
         mostrar_seccion("Mapa de Calor: Día de la Semana × Hora")
         st.markdown("Identificación visual de los períodos de mayor actividad.")
 
@@ -863,7 +867,7 @@ def ejecutar_modo_exitoso():
         )
 
     # ─── TAB 8: Frecuencia de utilización ────────────────────────────────
-    with tabs[7]:
+    with tab_frecuencia:
         mostrar_seccion("Frecuencia de Utilización del Sistema")
         st.markdown("Distribución de cuántos eventos registra cada usuario.")
 
@@ -887,7 +891,7 @@ def ejecutar_modo_exitoso():
         )
 
     # ─── TAB 9: Conclusiones ────────────────────────────────────────────
-    with tabs[8]:
+    with tab_conclusiones:
         mostrar_seccion("Conclusiones y Hallazgos Automáticos")
         st.markdown("""
         <div class="info-box">
@@ -930,7 +934,7 @@ def ejecutar_modo_exitoso():
                     st.markdown(f"- {d}: **{dp_full['mayor_salida']['eventos']:,}** eventos")
 
     # ─── TAB 10: Calidad de datos ────────────────────────────────────────
-    with tabs[9]:
+    with tab_calidad:
         mostrar_seccion("Validación y Calidad de Datos")
         st.markdown("Reporte de validación inicial del archivo cargado (datos originales, sin filtros).")
 
@@ -1100,7 +1104,7 @@ def ejecutar_modo_fallidos():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def ejecutar_modo_todos():
-    st.markdown("<h1><i class='bi bi-layers-fill' style='color:#3B82B8;'></i> Análisis Integral: Todos los Eventos</h1>", unsafe_allow_html=True)
+    st.markdown("<h1><i class='bi bi-layers-fill' style='color:#3B82B8;'></i> Reporte Ejecutivo - Sistema de Accesos UTMACH</h1>", unsafe_allow_html=True)
     st.markdown("Cargue los archivos correspondientes a eventos biométricos y vehiculares. El análisis biométrico es obligatorio.")
     
     col_bio, col_lpr = st.columns(2)
@@ -1207,6 +1211,30 @@ def ejecutar_modo_todos():
         if len(rango_fechas) == 2:
             df_lpr_f = df_lpr_f[(df_lpr_f["Fecha"] >= rango_fechas[0]) & (df_lpr_f["Fecha"] <= rango_fechas[1])]
 
+    # Construcción de df_consolidado_total para métricas globales
+    df_consolidado_total = df_f.copy()
+    
+    if not df_lpr_f.empty:
+        df_lpr_mapped = df_lpr_f.copy()
+        
+        # Mapear columnas LPR al estándar base
+        df_lpr_mapped["Punto de acceso"] = df_lpr_mapped["Camara"]
+        
+        def map_movimiento(d):
+            if pd.isna(d): return "OTRO"
+            d = str(d).upper()
+            if "ENTRADA" in d: return "ENTRADA"
+            if "SALIDA" in d: return "SALIDA"
+            return "OTRO"
+            
+        df_lpr_mapped["Movimiento"] = df_lpr_mapped["Direccion"].apply(map_movimiento)
+        df_lpr_mapped["Tipo_Usuario"] = df_lpr_mapped["Lista_Vehiculos"] if "Lista_Vehiculos" in df_lpr_mapped.columns else "Vehículo"
+        df_lpr_mapped["Persona"] = df_lpr_mapped["Matricula"]
+        df_lpr_mapped["Resultado"] = "Exitoso"  # LPR valid reads are implicitly successful
+        
+        # Concatenar asegurando que coincidan las dimensiones requeridas
+        df_consolidado_total = pd.concat([df_f, df_lpr_mapped], ignore_index=True)
+
         
     # Calcular estadísticas nuevas
     tasas = ats.calcular_tasas_generales(df_f)
@@ -1244,35 +1272,36 @@ def ejecutar_modo_todos():
     }
     conclusiones = ats.generar_conclusiones_todos(df_f, tasas, stats_nuevas)
     
-    # Calcular estadísticas base heredadas
+    # Calcular estadísticas base heredadas usando el total consolidado (Biométrico + LPR)
     stats_base = {
-        "flujo_punto_acceso": flujo_por_punto_acceso(df_f),
-        "flujo_hora": flujo_por_hora(df_f),
-        "heatmap_punto_hora": flujo_punto_hora(df_f),
-        "entradas_salidas": entradas_vs_salidas_general(df_f),
-        "entradas_salidas_hora": entradas_vs_salidas_por_hora(df_f),
-        "entradas_salidas_ingreso": entradas_vs_salidas_por_ingreso(df_f),
-        "flujo_ingreso": flujo_por_ingreso(df_f),
-        "tipo_usuario": flujo_por_tipo_usuario(df_f),
-        "tipo_usuario_ingreso": tipo_usuario_ingreso(df_f),
-        "flujo_diario": flujo_diario(df_f),
-        "flujo_diario_ingreso": flujo_diario_por_ingreso(df_f),
-        "dia_semana": flujo_dia_semana(df_f),
-        "heatmap_dia_hora": heatmap_dia_hora(df_f),
-        "ingreso_hora": ingreso_hora(df_f),
-        "punto_tipo_usuario": punto_tipo_usuario(df_f),
-        "frecuencia": frecuencia_utilizacion(df_f)[0],
+        "flujo_punto_acceso": flujo_por_punto_acceso(df_consolidado_total),
+        "flujo_hora": flujo_por_hora(df_consolidado_total),
+        "heatmap_punto_hora": flujo_punto_hora(df_consolidado_total),
+        "heatmap_consolidado_hora": flujo_consolidado_hora(df_consolidado_total),
+        "entradas_salidas": entradas_vs_salidas_general(df_consolidado_total),
+        "entradas_salidas_hora": entradas_vs_salidas_por_hora(df_consolidado_total),
+        "entradas_salidas_ingreso": entradas_vs_salidas_por_ingreso(df_consolidado_total),
+        "flujo_ingreso": flujo_por_ingreso(df_consolidado_total),
+        "flujo_consolidado": flujo_consolidado(df_consolidado_total),
+        "tipo_usuario": flujo_por_tipo_usuario(df_consolidado_total),
+        "tipo_usuario_ingreso": tipo_usuario_ingreso(df_consolidado_total),
+        "flujo_diario": flujo_diario(df_consolidado_total),
+        "flujo_diario_ingreso": flujo_diario_por_ingreso(df_consolidado_total),
+        "dia_semana": flujo_dia_semana(df_consolidado_total),
+        "heatmap_dia_hora": heatmap_dia_hora(df_consolidado_total),
+        "ingreso_hora": ingreso_hora(df_consolidado_total),
+        "punto_tipo_usuario": punto_tipo_usuario(df_consolidado_total),
+        "frecuencia": frecuencia_utilizacion(df_consolidado_total)[0],
     }
     
     # Render Dashboard
     
-    tabs = st.tabs([
-        "Resumen Ejecutivo",
+    tab_resumen, tab_flujo_gen, tab_dist_det, tab_comp_hor, tab_comp_det, tab_resultados, tab_frecuencia, tab_analitica, tab_calidad, tab_lpr = st.tabs([
+        "Resumen de Movilidad",
         "Flujo General",
-        "Análisis Temporal",
-        "Mapas de Calor",
-        "Usuarios",
-        "Puntos de Acceso",
+        "Distribución Detallada",
+        "Comportamiento Horario",
+        "Comportamiento Detallado",
         "Resultados",
         "Frecuencia",
         "Analítica Avanzada",
@@ -1280,8 +1309,8 @@ def ejecutar_modo_todos():
         "Análisis Vehicular LPR"
     ])
     
-    with tabs[0]:
-        mostrar_seccion("Resumen Ejecutivo")
+    with tab_resumen:
+        mostrar_seccion("Resumen General de Movilidad")
         
         # Huella de Movilidad
         huella = lprs.generar_huella_movilidad(df_f, df_lpr_valido if 'df_lpr_valido' in locals() else None)
@@ -1310,7 +1339,7 @@ def ejecutar_modo_todos():
 <div style="color: #A8B5C1; font-size: 13px; font-weight: bold; margin-bottom: 10px;">TERMINALES VEH</div>
 <div style="color: #F39C12; font-size: 32px; font-weight: bold;">{huella['tot_terminales_veh']:,}</div>
 <div style="color: #738291; font-size: 14px; margin-bottom: 15px;">{huella['pct_terminales_veh']}%</div>
-<div style="color: #A8B5C1; font-size: 12px;">Registros biométricos en accesos VEH</div>
+<div style="color: #A8B5C1; font-size: 12px;">Registros biométricos en terminales vehiculares</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -1359,54 +1388,59 @@ def ejecutar_modo_todos():
         st.markdown("---")
         
         c1, c2, c3, c4 = st.columns(4)
-        with c1: mostrar_metrica("Total Peatonal", tasas["total"])
+        with c1: mostrar_metrica("Total Biométricos", tasas["total"])
         with c2: mostrar_metrica("Tasa de Éxito", f"{tasas['tasa_exito']}%")
         with c3: mostrar_metrica("Tasa de Fallo", f"{tasas['tasa_fallo_general']}%")
         with c4: mostrar_metrica("Días Analizados", df_f["Fecha"].nunique())
         
         st.markdown("<br>", unsafe_allow_html=True)
-        mostrar_seccion("Conclusiones Peatonales Principales")
+        mostrar_seccion("Conclusiones Principales (Registros Biométricos)")
         for c in conclusiones:
             st.info(c)
 
-    with tabs[1]:
-        mostrar_seccion("Flujo General")
-        st.plotly_chart(grafico_ingreso(stats_base["flujo_ingreso"]), use_container_width=True)
+    with tab_flujo_gen:
+        mostrar_seccion("Flujo General Consolidado")
+        st.plotly_chart(grafico_flujo_consolidado(stats_base["flujo_consolidado"]), use_container_width=True)
         
         mostrar_seccion("Entradas vs Salidas")
         st.plotly_chart(grafico_entradas_salidas(stats_base["entradas_salidas"]), use_container_width=True)
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.plotly_chart(grafico_entradas_salidas_hora(stats_base["entradas_salidas_hora"]), use_container_width=True)
 
-    with tabs[2]:
-        mostrar_seccion("Análisis Temporal")
+    with tab_dist_det:
+        mostrar_seccion("Distribución Detallada por Categoría de Acceso")
+        st.plotly_chart(grafico_ingreso(stats_base["flujo_ingreso"]), use_container_width=True)
+        
+        mostrar_seccion("Flujo por Punto de Acceso Físico")
+        st.plotly_chart(grafico_flujo_punto_acceso(stats_base["flujo_punto_acceso"]), use_container_width=True)
+        
+    with tab_comp_hor:
+        mostrar_seccion("Comportamiento Horario Consolidado")
+        if "heatmap_consolidado_hora" in stats_base and not stats_base["heatmap_consolidado_hora"].empty:
+            st.plotly_chart(grafico_heatmap_consolidado_hora(stats_base["heatmap_consolidado_hora"]), use_container_width=True)
+        
+        mostrar_seccion("Comportamiento Diario")
+        st.plotly_chart(grafico_flujo_diario(stats_base["flujo_diario"]), use_container_width=True)
+
+    with tab_comp_det:
+        mostrar_seccion("Comportamiento Detallado por Hora")
         st.plotly_chart(grafico_flujo_hora(stats_base["flujo_hora"]), use_container_width=True)
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.plotly_chart(grafico_ingreso_hora(stats_base["ingreso_hora"]), use_container_width=True)
         
-        mostrar_seccion("Comportamiento Diario")
-        st.plotly_chart(grafico_flujo_diario(stats_base["flujo_diario"]), use_container_width=True)
-        
-    with tabs[3]:
-        mostrar_seccion("Mapas de Calor")
+        mostrar_seccion("Mapa de Calor: Puntos de Acceso vs Hora")
         st.plotly_chart(grafico_heatmap_punto_hora(stats_base["heatmap_punto_hora"]), use_container_width=True)
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.plotly_chart(grafico_heatmap_dia_hora(stats_base["heatmap_dia_hora"]), use_container_width=True)
-
-    with tabs[4]:
-        mostrar_seccion("Usuarios")
+        
+        mostrar_seccion("Usuarios por Tipo y Punto de Acceso")
         st.plotly_chart(grafico_tipo_usuario(stats_base["tipo_usuario"]), use_container_width=True)
         st.markdown("<br><br>", unsafe_allow_html=True)
         st.plotly_chart(grafico_tipo_usuario_ingreso(stats_base["tipo_usuario_ingreso"]), use_container_width=True)
-        
-        mostrar_seccion("Usuarios por Punto de Acceso")
+        st.markdown("<br><br>", unsafe_allow_html=True)
         st.plotly_chart(grafico_punto_tipo_usuario(stats_base["punto_tipo_usuario"]), use_container_width=True)
-        
-    with tabs[5]:
-        mostrar_seccion("Puntos de Acceso")
-        st.plotly_chart(grafico_flujo_punto_acceso(stats_base["flujo_punto_acceso"]), use_container_width=True)
 
-    with tabs[6]:
+    with tab_resultados:
         mostrar_seccion("Análisis de Tasas de Fallo y Éxito")
         mostrar_seccion("1. Distribución de Resultados")
         if not stats_nuevas["resultados"].empty:
@@ -1431,11 +1465,11 @@ def ejecutar_modo_todos():
         if not stats_nuevas["cruce_device"].empty:
             st.plotly_chart(atv.grafico_device_resultado(stats_nuevas["cruce_device"]), use_container_width=True)
 
-    with tabs[7]:
+    with tab_frecuencia:
         mostrar_seccion("Frecuencia")
         st.plotly_chart(grafico_frecuencia(stats_base["frecuencia"]), use_container_width=True)
 
-    with tabs[8]:
+    with tab_analitica:
         mostrar_seccion("Analítica Avanzada e Inteligencia")
         
         # 1. Comparación
@@ -1529,7 +1563,7 @@ def ejecutar_modo_todos():
             junio25 = conteo_ingreso.get("25 de Junio", 0)
             st.markdown(f"**Entradas utilizadas:** Ferroviaria ({ferroviaria}), 25 de Junio ({junio25})")
 
-    with tabs[9]:
+    with tab_calidad:
         mostrar_seccion("Calidad de Datos")
         col_q1, col_q2, col_q3 = st.columns(3)
         with col_q1:
@@ -1557,7 +1591,7 @@ def ejecutar_modo_todos():
         )
         st.dataframe(nulos_df, use_container_width=True, hide_index=True)
 
-    with tabs[10]:
+    with tab_lpr:
         mostrar_seccion("Análisis Vehicular LPR")
         
         if df_lpr_valido is not None and not df_lpr_valido.empty:
@@ -1610,7 +1644,7 @@ def ejecutar_modo_todos():
                     st.markdown(f"""
 <div style="background-color: #141E29; border-left: 4px solid #1ABC9C; padding: 15px 20px; border-radius: 4px; font-family: sans-serif;">
 <div style="color: #A8B5C1; font-size: 12px; margin-bottom: 5px;">INTENSIDAD PROMEDIO</div>
-<div style="color: #E8EEF3; font-size: 18px; font-weight: bold;">≈ {hora_max['Vehiculos_por_minuto']} reg/min</div>
+<div style="color: #E8EEF3; font-size: 18px; font-weight: bold;">≈ {hora_max['Registros_por_minuto']} reg/min</div>
 </div>
 """, unsafe_allow_html=True)
                 
@@ -1621,7 +1655,7 @@ def ejecutar_modo_todos():
                 # Ranking de Horas
                 df_top_horas = lprs.stats_flujo_vehicular_top_periodos(df_lpr_f)
                 mostrar_seccion("Períodos de mayor flujo")
-                st.dataframe(df_top_horas[["Franja", "Registros", "Vehiculos_por_minuto"]].rename(columns={"Vehiculos_por_minuto": "Reg/Minuto"}), use_container_width=True, hide_index=True)
+                st.dataframe(df_top_horas[["Franja", "Registros", "Registros_por_minuto"]].rename(columns={"Registros_por_minuto": "Reg/Minuto"}), use_container_width=True, hide_index=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
 
             mostrar_seccion("Actividad vehicular en el tiempo")
@@ -1638,7 +1672,7 @@ def ejecutar_modo_todos():
             mostrar_seccion("Flujo por acceso")
             df_flujo_acceso = lprs.stats_flujo_vehicular_por_acceso(df_lpr_f)
             if not df_flujo_acceso.empty:
-                st.dataframe(df_flujo_acceso.rename(columns={"Vehiculos_por_minuto": "Reg/Minuto", "Hora_Pico": "Hora Pico"}), use_container_width=True, hide_index=True)
+                st.dataframe(df_flujo_acceso.rename(columns={"Registros_por_minuto": "Reg/Minuto", "Hora_Pico": "Hora Pico"}), use_container_width=True, hide_index=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
             
             df_lpr_sitio = lprs.stats_lpr_por_sitio(df_lpr_f)
@@ -1682,7 +1716,7 @@ def ejecutar_modo_todos():
                         pdf_df_lpr_f = df_lpr_f
                         pdf_conclusiones_lpr = lprs.generar_conclusiones_lpr(pdf_stats_gen_lpr, pdf_df_lpr_f)
 
-                    pdf_buffer = exportar_reporte_integral_pdf(df_f, tasas, stats_base, stats_nuevas, conclusiones, calidad, pdf_stats_gen_lpr, pdf_df_lpr_f, pdf_conclusiones_lpr)
+                    pdf_buffer = exportar_reporte_integral_pdf(df_consolidado_total, tasas, stats_base, stats_nuevas, conclusiones, calidad, pdf_stats_gen_lpr, pdf_df_lpr_f, pdf_conclusiones_lpr, huella_dashboard=huella)
                     st.download_button(
                         label="Descargar PDF",
                         data=pdf_buffer,
@@ -1703,7 +1737,8 @@ def main():
     st.sidebar.markdown("## <i class='bi bi-bar-chart'></i> Análisis", unsafe_allow_html=True)
     modo = st.sidebar.radio(
         "Seleccione el tipo de análisis:",
-        options=["Eventos Normales", "Eventos Anormales", "Todos los Eventos"],
+        # options=["Eventos Normales", "Eventos Anormales", "Todos los Eventos"],
+        options=["Todos los Eventos"],
         index=0,
         key="selector_modo_analisis"
     )

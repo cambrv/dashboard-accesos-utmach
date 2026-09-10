@@ -63,9 +63,18 @@ DIAS_SEMANA_MAP = {
 
 # ─── Colores para gráficos ──────────────────────────────────────────────────
 COLORES_INGRESO = {
-    "Ferroviaria": "#1f77b4",
-    "25 de Junio": "#ff7f0e",
-    "No clasificado": "#7f7f7f",
+    "Peatonal Ferroviaria": "#1f77b4",        # Azul
+    "Peatonal 25 de Junio": "#ff7f0e",        # Naranja
+    "Vehicular por biométrico Ferroviaria": "#2ca02c",  # Verde
+    "Vehicular por biométrico 25 de Junio": "#d62728",  # Rojo
+    "Vehicular por LPR Ferroviaria": "#9467bd",         # Morado
+    "Vehicular por LPR 25 de Junio": "#8c564b",         # Marrón
+    "Error de clasificación": "#7f7f7f"       # Gris
+}
+
+COLORES_CONSOLIDADO = {
+    "Peatonal": "#1f77b4",    # Azul (mismo que base peatonal)
+    "Vehicular": "#d62728"    # Rojo (mismo que base vehicular)
 }
 
 COLORES_MOVIMIENTO = {

@@ -134,7 +134,7 @@ def horas_pico(df: pd.DataFrame) -> dict:
 def flujo_punto_hora(df: pd.DataFrame) -> pd.DataFrame:
     """Matriz de punto de acceso × hora con cantidad de eventos."""
     pivot = df.pivot_table(
-        index="Punto de acceso",
+        index="Ingreso",
         columns="Hora_Dia",
         values="Hora",
         aggfunc="count",
@@ -145,7 +145,24 @@ def flujo_punto_hora(df: pd.DataFrame) -> pd.DataFrame:
         if h not in pivot.columns:
             pivot[h] = 0
     pivot = pivot[sorted(pivot.columns)]
-    pivot.index = pivot.index.map(obtener_nombre_amigable)
+    return pivot
+
+def flujo_consolidado_hora(df: pd.DataFrame) -> pd.DataFrame:
+    """Matriz de Tipo_Flujo_Consolidado × hora con cantidad de eventos."""
+    if "Tipo_Flujo_Consolidado" not in df.columns:
+        return pd.DataFrame()
+    pivot = df.pivot_table(
+        index="Tipo_Flujo_Consolidado",
+        columns="Hora_Dia",
+        values="Hora",
+        aggfunc="count",
+        fill_value=0,
+    )
+    # Asegurar todas las columnas 0-23
+    for h in range(24):
+        if h not in pivot.columns:
+            pivot[h] = 0
+    pivot = pivot[sorted(pivot.columns)]
     return pivot
 
 
@@ -185,9 +202,20 @@ def entradas_vs_salidas_por_hora(df: pd.DataFrame) -> pd.DataFrame:
     return grupo
 
 
-# ─── 9.6 Flujo por ingreso ──────────────────────────────────────────────────
+# ─── 9.6 Flujo por ingreso y consolidado ───────────────────────────────────
+def flujo_consolidado(df: pd.DataFrame) -> pd.DataFrame:
+    """Flujo agrupado por Tipo_Flujo_Consolidado."""
+    if "Tipo_Flujo_Consolidado" not in df.columns:
+        return pd.DataFrame()
+    total = len(df)
+    grupo = df.groupby("Tipo_Flujo_Consolidado").agg(
+        Eventos=("Hora", "count")
+    ).reset_index()
+    grupo["Porcentaje"] = (grupo["Eventos"] / total * 100).round(DECIMALES_PORCENTAJE)
+    return grupo.sort_values("Eventos", ascending=False)
+
 def flujo_por_ingreso(df: pd.DataFrame) -> pd.DataFrame:
-    """Flujo agrupado por ingreso."""
+    """Flujo agrupado por ingreso (Categoria_Ingreso)."""
     total = len(df)
     grupo = df.groupby("Ingreso").agg(
         Eventos=("Hora", "count"),
@@ -448,7 +476,7 @@ def generar_conclusiones(df: pd.DataFrame, metricas: dict) -> list[str]:
         eventos_c = int(ingreso_conteo[ingreso_nombre])
         pct_c = round(eventos_c / total * 100, 2)
         conclusiones.append(
-            f"Ingreso **{ingreso_nombre}**: **{eventos_c:,}** eventos ({pct_c}%)."
+            f"**{ingreso_nombre}**: **{eventos_c:,}** eventos ({pct_c}%)."
         )
 
     # 7. Día de mayor flujo
@@ -483,7 +511,7 @@ def generar_conclusiones(df: pd.DataFrame, metricas: dict) -> list[str]:
         ev_2 = int(ingreso_conteo.iloc[1])
         ratio = round(ev_1 / ev_2, 1) if ev_2 > 0 else 0
         conclusiones.append(
-            f"El ingreso **{ing_1}** registró **{ratio}x** más eventos que el ingreso **{ing_2}** "
+            f"**{ing_1}** registró **{ratio}x** más eventos que **{ing_2}** "
             f"({ev_1:,} vs {ev_2:,})."
         )
 

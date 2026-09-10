@@ -9,6 +9,7 @@ from config import (
     LPR_KEYWORDS_CAMARA, LPR_DIRECCION_ENTRADA, LPR_DIRECCION_SALIDA, LPR_DIRECCION_OTRA,
     DIAS_SEMANA_MAP, FORMATO_INTERVALO
 )
+from access_names import clasificar_acceso_funcional, obtener_clasificacion_completa
 
 def procesar_datos_lpr(df_crudo: pd.DataFrame, mapeo: dict) -> tuple[pd.DataFrame, dict]:
     """Limpia y estandariza las columnas LPR."""
@@ -50,21 +51,28 @@ def procesar_datos_lpr(df_crudo: pd.DataFrame, mapeo: dict) -> tuple[pd.DataFram
         lambda h: FORMATO_INTERVALO.format(int(h), int(h)) if h >= 0 else "Desconocido"
     )
     
-    def clasificar_sitio(camara: str) -> str:
-        if INGRESO_FERROVIARIA_KEYWORD in camara: return INGRESO_FERROVIARIA
-        if any(pat in camara for pat in PATRONES_25_JUNIO): return INGRESO_25_JUNIO
-        if "25" in camara or "JUNIO" in camara: return INGRESO_25_JUNIO
-        return INGRESO_NO_CLASIFICADO
-
-    df["Sitio"] = df["Camara"].apply(clasificar_sitio)
+    # 5. Punto de Acceso Funcional
+    clasificaciones = df["Camara"].apply(lambda x: obtener_clasificacion_completa(x, es_lpr=True))
+    df["Categoria_Ingreso"] = clasificaciones.apply(lambda x: x["Categoria_Ingreso"])
+    df["Tipo_Flujo_Consolidado"] = clasificaciones.apply(lambda x: x["Tipo_Flujo_Consolidado"])
+    df["Mecanismo_Registro"] = clasificaciones.apply(lambda x: x["Mecanismo_Registro"])
+    df["Ubicacion_Ingreso"] = clasificaciones.apply(lambda x: x["Ubicacion_Ingreso"])
     
+    # Conservar Punto_Acceso e Ingreso para compatibilidad, usando la categoría oficial
+    df["Punto_Acceso"] = df["Categoria_Ingreso"]
+    df["Ingreso"] = df["Categoria_Ingreso"]
+    # 6. Dirección de LPR
     def clasificar_direccion(camara: str) -> str:
-        if "ING" in camara or "ENTRADA" in camara: return LPR_DIRECCION_ENTRADA
-        if "SAL" in camara or "SALIDA" in camara: return LPR_DIRECCION_SALIDA
+        if pd.isna(camara): return LPR_DIRECCION_OTRA
+        tokens = str(camara).upper().replace("_", " ").replace("-", " ").split()
+        if any(t in ["ENTRADA", "INGRESO", "ING", "ENT"] for t in tokens): return LPR_DIRECCION_ENTRADA
+        if any(t in ["SALIDA", "SAL"] for t in tokens): return LPR_DIRECCION_SALIDA
         return LPR_DIRECCION_OTRA
 
     df["Direccion"] = df["Camara"].apply(clasificar_direccion)
-    df["Punto_Acceso"] = df["Sitio"] + " - " + df["Direccion"]
+    
+    # Conservamos Sitio para compatibilidad interna si es necesario, pero será igual al Punto_Acceso
+    df["Sitio"] = df["Punto_Acceso"]
     
     metricas = {"total_lecturas_originales": len(df_crudo), "total_procesados_inicial": len(df)}
     return df, metricas

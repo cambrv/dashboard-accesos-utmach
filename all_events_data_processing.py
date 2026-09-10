@@ -11,6 +11,7 @@ from config import (
     DIAS_SEMANA_MAP, FORMATO_INTERVALO,
     MOVIMIENTO_ENTRADA, MOVIMIENTO_SALIDA, MOVIMIENTO_OTRO
 )
+from access_names import clasificar_acceso_funcional
 
 def clasificar_tipo_evento(texto_evento: str) -> str:
     """
@@ -82,30 +83,25 @@ def procesar_datos_todos(df_crudo: pd.DataFrame, mapeo: dict) -> tuple[pd.DataFr
     df["Intervalo_Horario"] = df["Hora_Dia"].apply(
         lambda h: FORMATO_INTERVALO.format(int(h), int(h)) if h >= 0 else "Desconocido"
     )
-        
-    # 4. Clasificación de Ingreso
-    def clasificar_ingreso(punto: str) -> str:
-        p = punto.upper()
-        if p == "DESCONOCIDO" or not p:
-            return INGRESO_NO_CLASIFICADO
-        if INGRESO_FERROVIARIA_KEYWORD in p:
-            return INGRESO_FERROVIARIA
-        if any(pat in p for pat in PATRONES_25_JUNIO):
-            return INGRESO_25_JUNIO
-        return INGRESO_NO_CLASIFICADO
-
-    df["Ingreso"] = df["Punto de acceso"].apply(clasificar_ingreso)
+    from access_names import obtener_clasificacion_completa
+    
+    clasificaciones = df["Punto de acceso"].apply(lambda x: obtener_clasificacion_completa(x, es_lpr=False))
+    df["Categoria_Ingreso"] = clasificaciones.apply(lambda x: x["Categoria_Ingreso"])
+    df["Tipo_Flujo_Consolidado"] = clasificaciones.apply(lambda x: x["Tipo_Flujo_Consolidado"])
+    df["Mecanismo_Registro"] = clasificaciones.apply(lambda x: x["Mecanismo_Registro"])
+    df["Ubicacion_Ingreso"] = clasificaciones.apply(lambda x: x["Ubicacion_Ingreso"])
+    df["Ingreso"] = df["Categoria_Ingreso"]
     
     # 4.5 Clasificación de Movimiento
     def clasificar_movimiento(punto: str) -> str:
         if pd.isna(punto):
             return MOVIMIENTO_OTRO
-        p = str(punto).upper()
-        if MOVIMIENTO_ENTRADA in p:
+        tokens = str(punto).upper().replace("_", " ").replace("-", " ").split()
+        if any(t in ["ENTRADA", "INGRESO", "ING", "ENT"] for t in tokens):
             return MOVIMIENTO_ENTRADA
-        if MOVIMIENTO_SALIDA in p:
+        if any(t in ["SALIDA", "SAL"] for t in tokens):
             return MOVIMIENTO_SALIDA
-        return MOVIMIENTO_ENTRADA # Por defecto entrada en caso de torniquetes mixtos que no lo especifican
+        return MOVIMIENTO_OTRO
 
     df["Movimiento"] = df["Punto de acceso"].apply(clasificar_movimiento)
     

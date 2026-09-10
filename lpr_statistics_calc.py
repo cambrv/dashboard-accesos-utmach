@@ -26,7 +26,7 @@ def stats_flujo_vehicular_por_hora(df_valido: pd.DataFrame) -> pd.DataFrame:
     if df_valido.empty: return pd.DataFrame()
     agrupado = df_valido.groupby("Hora_Dia").size().reset_index(name="Registros")
     agrupado.rename(columns={"Hora_Dia": "Hora"}, inplace=True)
-    agrupado["Vehiculos_por_minuto"] = (agrupado["Registros"] / 60).round(1)
+    agrupado["Registros_por_minuto"] = (agrupado["Registros"] / 60).round(1)
     
     todas_horas = pd.DataFrame({"Hora": range(24)})
     resultado = todas_horas.merge(agrupado, on="Hora", how="left").fillna(0)
@@ -37,7 +37,7 @@ def stats_flujo_vehicular_top_periodos(df_valido: pd.DataFrame, n: int = 5) -> p
     if df_valido.empty: return pd.DataFrame()
     agrupado = df_valido.groupby("Hora_Dia").size().reset_index(name="Registros")
     agrupado.rename(columns={"Hora_Dia": "Hora"}, inplace=True)
-    agrupado["Vehiculos_por_minuto"] = (agrupado["Registros"] / 60).round(1)
+    agrupado["Registros_por_minuto"] = (agrupado["Registros"] / 60).round(1)
     agrupado["Franja"] = agrupado["Hora"].apply(lambda h: f"{int(h)}:00–{(int(h)+1)%24}:00")
     agrupado = agrupado.sort_values(by="Registros", ascending=False).head(n)
     return agrupado
@@ -50,11 +50,11 @@ def stats_flujo_vehicular_por_acceso(df_valido: pd.DataFrame) -> pd.DataFrame:
     idx_max = agrupado.groupby("Punto_Acceso")["Registros"].idxmax()
     top_por_acceso = agrupado.loc[idx_max].copy()
     
-    top_por_acceso["Vehiculos_por_minuto"] = (top_por_acceso["Registros"] / 60).round(1)
+    top_por_acceso["Registros_por_minuto"] = (top_por_acceso["Registros"] / 60).round(1)
     top_por_acceso["Hora_Pico"] = top_por_acceso["Hora_Dia"].apply(lambda h: f"{int(h)}:00–{(int(h)+1)%24}:00")
     
     top_por_acceso = top_por_acceso.sort_values(by="Registros", ascending=False)
-    return top_por_acceso[["Punto_Acceso", "Hora_Pico", "Registros", "Vehiculos_por_minuto"]]
+    return top_por_acceso[["Punto_Acceso", "Hora_Pico", "Registros", "Registros_por_minuto"]]
 
 def stats_lpr_por_sitio(df_valido: pd.DataFrame) -> pd.DataFrame:
     if df_valido.empty: return pd.DataFrame()
@@ -86,7 +86,7 @@ def generar_conclusiones_lpr(stats_gen: dict, df_valido: pd.DataFrame) -> list:
         hora_max = df_hora.loc[df_hora["Registros"].idxmax()]
         if hora_max["Registros"] > 0:
             concentracion = round((hora_max["Registros"] / total) * 100, 1)
-            conclusiones.append(f"La hora de mayor flujo vehicular fue entre las {int(hora_max['Hora'])}:00 y {(int(hora_max['Hora'])+1)%24}:00, con {int(hora_max['Registros']):,} registros vehiculares. Esto representa un promedio de {hora_max['Vehiculos_por_minuto']} registros vehiculares por minuto durante ese período.")
+            conclusiones.append(f"La hora de mayor flujo vehicular fue entre las {int(hora_max['Hora'])}:00 y {(int(hora_max['Hora'])+1)%24}:00, con {int(hora_max['Registros']):,} registros vehiculares. Esto representa un promedio de {hora_max['Registros_por_minuto']} registros vehiculares por minuto durante ese período.")
             conclusiones.append(f"El {concentracion}% del total de los registros vehiculares se concentraron exclusivamente durante esta hora pico.")
             
     return conclusiones
@@ -133,7 +133,7 @@ def generar_texto_resumen_ejecutivo(df_valido: pd.DataFrame, stats_gen: dict) ->
         hora_max = df_hora.loc[df_hora["Registros"].idxmax()]
         texto += (
             f"La mayor concentración de registros vehiculares se presentó entre las **{int(hora_max['Hora'])}:00 y {(int(hora_max['Hora'])+1)%24}:00**, "
-            f"con **{int(hora_max['Registros']):,} registros**, equivalente a aproximadamente **{hora_max['Vehiculos_por_minuto']} registros vehiculares por minuto** durante este período.\n\n"
+            f"con **{int(hora_max['Registros']):,} registros**, equivalente a aproximadamente **{hora_max['Registros_por_minuto']} registros vehiculares por minuto** durante este período.\n\n"
             f"Este comportamiento permite identificar la franja horaria de mayor demanda y facilita la evaluación de los momentos de mayor movimiento en los accesos.\n\n"
         )
     else:
