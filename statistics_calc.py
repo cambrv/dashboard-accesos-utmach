@@ -516,3 +516,5 @@ def generar_conclusiones(df: pd.DataFrame, metricas: dict) -> list[str]:
         )
 
     return conclusiones
+
+# Trigger streamlit cloud redeploy
