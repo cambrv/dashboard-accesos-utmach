@@ -3,11 +3,12 @@ Módulo de carga de datos para eventos vehiculares (LPR).
 """
 import pandas as pd
 import streamlit as st
+from excel_processor import leer_excel_centralizado
 
 @st.cache_data(max_entries=1, ttl=1800, show_spinner="Cargando archivo de eventos vehiculares...")
 def cargar_excel_lpr(archivo) -> pd.DataFrame:
     """Carga el archivo subido en memoria."""
-    return pd.read_excel(archivo, engine="openpyxl")
+    return leer_excel_centralizado(archivo, es_lpr=True)
 
 def detectar_columnas_lpr(df: pd.DataFrame) -> dict:
     """

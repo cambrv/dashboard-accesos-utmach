@@ -1066,17 +1066,17 @@ def ejecutar_modo_fallidos():
     if not stats["evolucion_diaria"].empty and not stats["por_hora"].empty:
         c1, c2 = st.columns(2)
         with c1:
-            st.plotly_chart(fv.grafico_fallos_evolucion_diaria(stats["evolucion_diaria"]), use_container_width=True)
+            st.plotly_chart(fv.grafico_fallos_evolucion_diaria(stats["evolucion_diaria"]), use_container_width=True, key='grafico_fallos_evolucion_diaria_1068')
         with c2:
-            st.plotly_chart(fv.grafico_fallos_por_hora(stats["por_hora"]), use_container_width=True)
+            st.plotly_chart(fv.grafico_fallos_por_hora(stats["por_hora"]), use_container_width=True, key='grafico_fallos_por_hora_1070')
             
     mostrar_seccion("2. Análisis Geográfico")
     if not stats["por_ingreso"].empty and not stats["por_punto"].empty:
         c1, c2 = st.columns(2)
         with c1:
-            st.plotly_chart(fv.grafico_fallos_por_ingreso(stats["por_ingreso"]), use_container_width=True)
+            st.plotly_chart(fv.grafico_fallos_por_ingreso(stats["por_ingreso"]), use_container_width=True, key='grafico_fallos_por_ingreso_1076')
         with c2:
-            st.plotly_chart(fv.grafico_fallos_por_punto(stats["por_punto"]), use_container_width=True)
+            st.plotly_chart(fv.grafico_fallos_por_punto(stats["por_punto"]), use_container_width=True, key='grafico_fallos_por_punto_1078')
             
     mostrar_seccion("3. Conclusiones Principales")
     for c in conclusiones:
@@ -1400,45 +1400,45 @@ def ejecutar_modo_todos():
 
     with tab_flujo_gen:
         mostrar_seccion("Flujo General Consolidado")
-        st.plotly_chart(grafico_flujo_consolidado(stats_base["flujo_consolidado"]), use_container_width=True)
+        st.plotly_chart(grafico_flujo_consolidado(stats_base["flujo_consolidado"]), use_container_width=True, key='grafico_flujo_consolidado_1402')
         
         mostrar_seccion("Entradas vs Salidas")
-        st.plotly_chart(grafico_entradas_salidas(stats_base["entradas_salidas"]), use_container_width=True)
+        st.plotly_chart(grafico_entradas_salidas(stats_base["entradas_salidas"]), use_container_width=True, key='grafico_entradas_salidas_1405')
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.plotly_chart(grafico_entradas_salidas_hora(stats_base["entradas_salidas_hora"]), use_container_width=True)
+        st.plotly_chart(grafico_entradas_salidas_hora(stats_base["entradas_salidas_hora"]), use_container_width=True, key='grafico_entradas_salidas_hora_1407')
 
     with tab_dist_det:
         mostrar_seccion("Distribución Detallada por Categoría de Acceso")
-        st.plotly_chart(grafico_ingreso(stats_base["flujo_ingreso"]), use_container_width=True)
+        st.plotly_chart(grafico_ingreso(stats_base["flujo_ingreso"]), use_container_width=True, key='grafico_ingreso_1411')
         
         mostrar_seccion("Flujo por Punto de Acceso Físico")
-        st.plotly_chart(grafico_flujo_punto_acceso(stats_base["flujo_punto_acceso"]), use_container_width=True)
+        st.plotly_chart(grafico_flujo_punto_acceso(stats_base["flujo_punto_acceso"]), use_container_width=True, key='grafico_flujo_punto_acceso_1414')
         
     with tab_comp_hor:
         mostrar_seccion("Comportamiento Horario Consolidado")
         if "heatmap_consolidado_hora" in stats_base and not stats_base["heatmap_consolidado_hora"].empty:
-            st.plotly_chart(grafico_heatmap_consolidado_hora(stats_base["heatmap_consolidado_hora"]), use_container_width=True)
+            st.plotly_chart(grafico_heatmap_consolidado_hora(stats_base["heatmap_consolidado_hora"]), use_container_width=True, key='grafico_heatmap_consolidado_hora_1419')
         
         mostrar_seccion("Comportamiento Diario")
-        st.plotly_chart(grafico_flujo_diario(stats_base["flujo_diario"]), use_container_width=True)
+        st.plotly_chart(grafico_flujo_diario(stats_base["flujo_diario"]), use_container_width=True, key='grafico_flujo_diario_1422')
 
     with tab_comp_det:
         mostrar_seccion("Comportamiento Detallado por Hora")
-        st.plotly_chart(grafico_flujo_hora(stats_base["flujo_hora"]), use_container_width=True)
+        st.plotly_chart(grafico_flujo_hora(stats_base["flujo_hora"]), use_container_width=True, key='grafico_flujo_hora_1426')
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.plotly_chart(grafico_ingreso_hora(stats_base["ingreso_hora"]), use_container_width=True)
+        st.plotly_chart(grafico_ingreso_hora(stats_base["ingreso_hora"]), use_container_width=True, key='grafico_ingreso_hora_1428')
         
         mostrar_seccion("Mapa de Calor: Puntos de Acceso vs Hora")
-        st.plotly_chart(grafico_heatmap_punto_hora(stats_base["heatmap_punto_hora"]), use_container_width=True)
+        st.plotly_chart(grafico_heatmap_punto_hora(stats_base["heatmap_punto_hora"]), use_container_width=True, key='grafico_heatmap_punto_hora_1431')
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.plotly_chart(grafico_heatmap_dia_hora(stats_base["heatmap_dia_hora"]), use_container_width=True)
+        st.plotly_chart(grafico_heatmap_dia_hora(stats_base["heatmap_dia_hora"]), use_container_width=True, key='grafico_heatmap_dia_hora_1433')
         
         mostrar_seccion("Usuarios por Tipo y Punto de Acceso")
-        st.plotly_chart(grafico_tipo_usuario(stats_base["tipo_usuario"]), use_container_width=True)
+        st.plotly_chart(grafico_tipo_usuario(stats_base["tipo_usuario"]), use_container_width=True, key='grafico_tipo_usuario_1436')
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.plotly_chart(grafico_tipo_usuario_ingreso(stats_base["tipo_usuario_ingreso"]), use_container_width=True)
+        st.plotly_chart(grafico_tipo_usuario_ingreso(stats_base["tipo_usuario_ingreso"]), use_container_width=True, key='grafico_tipo_usuario_ingreso_1438')
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.plotly_chart(grafico_punto_tipo_usuario(stats_base["punto_tipo_usuario"]), use_container_width=True)
+        st.plotly_chart(grafico_punto_tipo_usuario(stats_base["punto_tipo_usuario"]), use_container_width=True, key='grafico_punto_tipo_usuario_1440')
 
     with tab_resultados:
         mostrar_seccion("Análisis de Tasas de Fallo y Éxito")
@@ -1446,28 +1446,28 @@ def ejecutar_modo_todos():
         if not stats_nuevas["resultados"].empty:
             st.dataframe(stats_nuevas["resultados"].style.format({"Eventos": "{:,}", "Porcentaje": "{:.2f}%"}), hide_index=True)
             st.markdown("<br><br>", unsafe_allow_html=True)
-            st.plotly_chart(atv.grafico_resultados_generales(stats_nuevas["resultados"]), use_container_width=True)
+            st.plotly_chart(atv.grafico_resultados_generales(stats_nuevas["resultados"]), use_container_width=True, key='grafico_resultados_generales_1448')
                 
         mostrar_seccion("2. Comportamiento por Ingreso")
         if not stats_nuevas["cruce_ingreso"].empty:
-            st.plotly_chart(atv.grafico_cruce_ingreso_resultado(stats_nuevas["cruce_ingreso"]), use_container_width=True)
+            st.plotly_chart(atv.grafico_cruce_ingreso_resultado(stats_nuevas["cruce_ingreso"]), use_container_width=True, key='grafico_cruce_ingreso_resultado_1452')
             
         mostrar_seccion("3. Evolución de Tasas")
         if not stats_nuevas["cruce_hora"].empty and not stats_nuevas["evolucion_diaria"].empty:
-            st.plotly_chart(atv.grafico_evolucion_resultado(stats_nuevas["evolucion_diaria"]), use_container_width=True)
+            st.plotly_chart(atv.grafico_evolucion_resultado(stats_nuevas["evolucion_diaria"]), use_container_width=True, key='grafico_evolucion_resultado_1456')
             st.markdown("<br><br>", unsafe_allow_html=True)
-            st.plotly_chart(atv.grafico_cruce_hora_resultado(stats_nuevas["cruce_hora"]), use_container_width=True)
+            st.plotly_chart(atv.grafico_cruce_hora_resultado(stats_nuevas["cruce_hora"]), use_container_width=True, key='grafico_cruce_hora_resultado_1458')
                 
         mostrar_seccion("4. Hardware")
         if not stats_nuevas["cruce_punto"].empty:
-            st.plotly_chart(atv.grafico_punto_acceso_resultado(stats_nuevas["cruce_punto"]), use_container_width=True)
+            st.plotly_chart(atv.grafico_punto_acceso_resultado(stats_nuevas["cruce_punto"]), use_container_width=True, key='grafico_punto_acceso_resultado_1462')
             st.markdown("<br><br>", unsafe_allow_html=True)
         if not stats_nuevas["cruce_device"].empty:
-            st.plotly_chart(atv.grafico_device_resultado(stats_nuevas["cruce_device"]), use_container_width=True)
+            st.plotly_chart(atv.grafico_device_resultado(stats_nuevas["cruce_device"]), use_container_width=True, key='grafico_device_resultado_1465')
 
     with tab_frecuencia:
         mostrar_seccion("Frecuencia")
-        st.plotly_chart(grafico_frecuencia(stats_base["frecuencia"]), use_container_width=True)
+        st.plotly_chart(grafico_frecuencia(stats_base["frecuencia"]), use_container_width=True, key='grafico_frecuencia_1469')
 
     with tab_analitica:
         mostrar_seccion("Analítica Avanzada e Inteligencia")
@@ -1558,7 +1558,11 @@ def ejecutar_modo_todos():
                 
             st.markdown(f"**Departamento:** {', '.join(df_persona['Departamento'].unique())}")
             
-            conteo_ingreso = df_persona["Ingreso"].value_counts()
+            if "Ubicacion_Ingreso" in df_persona.columns:
+                conteo_ingreso = df_persona["Ubicacion_Ingreso"].value_counts()
+            else:
+                conteo_ingreso = df_persona["Ingreso"].apply(lambda x: "Ferroviaria" if "Ferroviaria" in str(x) else ("25 de Junio" if "25 de Junio" in str(x) else "Otra")).value_counts()
+                
             ferroviaria = conteo_ingreso.get("Ferroviaria", 0)
             junio25 = conteo_ingreso.get("25 de Junio", 0)
             st.markdown(f"**Entradas utilizadas:** Ferroviaria ({ferroviaria}), 25 de Junio ({junio25})")
@@ -1649,7 +1653,7 @@ def ejecutar_modo_todos():
 """, unsafe_allow_html=True)
                 
                 st.markdown("<br><br>", unsafe_allow_html=True)
-                st.plotly_chart(lprv.grafico_flujo_vehicular_por_hora(df_hora_flujo, theme="dark"), use_container_width=True)
+                st.plotly_chart(lprv.grafico_flujo_vehicular_por_hora(df_hora_flujo, theme="dark"), use_container_width=True, key='grafico_flujo_vehicular_por_hora_1651')
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 
                 # Ranking de Horas
@@ -1660,11 +1664,11 @@ def ejecutar_modo_todos():
 
             mostrar_seccion("Actividad vehicular en el tiempo")
             df_dia = lprs.stats_eventos_por_dia(df_lpr_f)
-            st.plotly_chart(lprv.grafico_lpr_por_dia(df_dia, theme="dark"), use_container_width=True)
+            st.plotly_chart(lprv.grafico_lpr_por_dia(df_dia, theme="dark"), use_container_width=True, key='grafico_lpr_por_dia_1662')
             st.markdown("<br><br>", unsafe_allow_html=True)
                 
             df_heatmap = lprs.stats_heatmap_dia_hora(df_lpr_f)
-            st.plotly_chart(lprv.grafico_heatmap_lpr(df_heatmap, theme="dark"), use_container_width=True)
+            st.plotly_chart(lprv.grafico_heatmap_lpr(df_heatmap, theme="dark"), use_container_width=True, key='grafico_heatmap_lpr_1666')
             
             st.markdown("---")
             
@@ -1676,7 +1680,7 @@ def ejecutar_modo_todos():
                 st.markdown("<br><br>", unsafe_allow_html=True)
             
             df_lpr_sitio = lprs.stats_lpr_por_sitio(df_lpr_f)
-            st.plotly_chart(lprv.grafico_lpr_por_sitio(df_lpr_sitio, theme="dark"), use_container_width=True)
+            st.plotly_chart(lprv.grafico_lpr_por_sitio(df_lpr_sitio, theme="dark"), use_container_width=True, key='grafico_lpr_por_sitio_1678')
             
             st.markdown("---")
             
@@ -1688,7 +1692,7 @@ def ejecutar_modo_todos():
             st.dataframe(df_top, use_container_width=True, hide_index=True)
             st.metric("Promedio eventos/placa", round(stats_gen_lpr["eventos_validos"] / max(1, stats_gen_lpr["placas_unicas"]), 1))
             st.markdown("<br><br>", unsafe_allow_html=True)
-            st.plotly_chart(lprv.grafico_top_placas(df_top, theme="dark"), use_container_width=True)
+            st.plotly_chart(lprv.grafico_top_placas(df_top, theme="dark"), use_container_width=True, key='grafico_top_placas_1690')
                 
 
                 

@@ -6,6 +6,7 @@ Responsable de leer el archivo Excel y realizar la validación inicial.
 import pandas as pd
 import streamlit as st
 from config import COLUMNAS_ESPERADAS
+from excel_processor import leer_excel_centralizado
 
 
 @st.cache_data(max_entries=1, ttl=1800, show_spinner="Cargando archivo Excel...")
@@ -14,7 +15,7 @@ def cargar_excel(ruta_archivo: str) -> pd.DataFrame:
     Carga el archivo Excel y devuelve un DataFrame crudo.
     Utiliza cache para evitar recargas innecesarias.
     """
-    df = pd.read_excel(ruta_archivo, engine="openpyxl")
+    df = leer_excel_centralizado(ruta_archivo)
     return df
 
 
