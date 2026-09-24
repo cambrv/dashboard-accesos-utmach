@@ -15,7 +15,9 @@ Las "imágenes" del PDF son exclusivamente los gráficos estadísticos.
 import io
 import os
 import re
+import shutil
 import tempfile
+import threading
 from datetime import datetime
 
 import pandas as pd
@@ -436,12 +438,118 @@ def _configurar_layout_para_pdf(fig, ancho_cm=None, alto_cm=None):
     return base_width, base_height
 
 
+_CHROME_LOCK = threading.Lock()
+_CHROME_READY = False
+_CHROME_INIT_ERROR = None
+
+
+def _asegurar_entorno_kaleido() -> tuple[bool, str | None]:
+    """
+    Garantiza de forma controlada y eficiente que Kaleido 1.1.0 disponga de
+    un navegador Chrome o Chromium compatible para exportar gráficos a PNG.
+
+    - Evita ejecuciones redundantes en cada rerun de Streamlit o por cada gráfico.
+    - Respeta navegadores ya existentes en el sistema o variables de entorno (BROWSER_PATH).
+    - Detecta Chromium instalado mediante paquetes del sistema (/usr/bin/chromium).
+    - Descarga Chrome for Testing mediante el mecanismo oficial de Kaleido únicamente si no existe ningún navegador.
+    - Proporciona diagnósticos claros en caso de fallo.
+    """
+    global _CHROME_READY, _CHROME_INIT_ERROR
+
+    if _CHROME_READY:
+        return True, None
+
+    if _CHROME_INIT_ERROR is not None:
+        return False, _CHROME_INIT_ERROR
+
+    with _CHROME_LOCK:
+        if _CHROME_READY:
+            return True, None
+        if _CHROME_INIT_ERROR is not None:
+            return False, _CHROME_INIT_ERROR
+
+        try:
+            # 1. Comprobar variable de entorno previa BROWSER_PATH
+            env_browser = os.environ.get("BROWSER_PATH")
+            if env_browser and os.path.isfile(env_browser) and os.access(env_browser, os.X_OK):
+                _CHROME_READY = True
+                return True, None
+
+            # 2. Comprobar ejecutables de Chrome / Chromium en el PATH del sistema
+            candidatos_path = [
+                "google-chrome-stable",
+                "google-chrome",
+                "chromium",
+                "chromium-browser",
+                "chrome",
+            ]
+            for exe in candidatos_path:
+                ruta = shutil.which(exe)
+                if ruta and os.path.isfile(ruta) and os.access(ruta, os.X_OK):
+                    os.environ["BROWSER_PATH"] = ruta
+                    _CHROME_READY = True
+                    return True, None
+
+            # 3. Comprobar rutas típicas en sistemas Linux (Streamlit Community Cloud)
+            rutas_linux = [
+                "/usr/bin/chromium",
+                "/usr/bin/chromium-browser",
+                "/usr/bin/google-chrome-stable",
+                "/usr/bin/google-chrome",
+                "/usr/bin/chrome",
+                "/snap/bin/chromium",
+            ]
+            for ruta in rutas_linux:
+                if os.path.isfile(ruta) and os.access(ruta, os.X_OK):
+                    os.environ["BROWSER_PATH"] = ruta
+                    _CHROME_READY = True
+                    return True, None
+
+            # 4. Comprobar si Choreographer / Kaleido ya localiza un navegador en el sistema
+            try:
+                from choreographer.browsers.chromium import Chromium
+                choreo_path = Chromium.find_browser(skip_local=False)
+                if choreo_path and os.path.isfile(choreo_path) and os.access(choreo_path, os.X_OK):
+                    os.environ["BROWSER_PATH"] = choreo_path
+                    _CHROME_READY = True
+                    return True, None
+            except Exception:
+                pass
+
+            # 5. Si no se encontró ningún navegador, usar el mecanismo oficial de Kaleido
+            print("[PDF] No se detectó navegador Chrome/Chromium en el sistema. Inicializando mediante kaleido.get_chrome_sync()...")
+            import kaleido
+            chrome_path = kaleido.get_chrome_sync()
+            if chrome_path and os.path.isfile(str(chrome_path)):
+                os.environ["BROWSER_PATH"] = str(chrome_path)
+                _CHROME_READY = True
+                print(f"[PDF] Navegador para Kaleido configurado en: {chrome_path}")
+                return True, None
+            else:
+                _CHROME_INIT_ERROR = (
+                    "Kaleido no pudo localizar ni descargar Chrome/Chromium. "
+                    f"Ruta obtenida: {chrome_path}"
+                )
+                return False, _CHROME_INIT_ERROR
+
+        except Exception as e:
+            _CHROME_INIT_ERROR = f"Error al inicializar Chrome para Kaleido: {str(e)}"
+            print(f"[PDF] {_CHROME_INIT_ERROR}")
+            return False, _CHROME_INIT_ERROR
+
+
 def _crear_grafico_png(fig, ancho_cm=None, alto_cm=None, scale=2):
     """
     Convierte una figura Plotly a PNG en memoria.
     """
     if fig is None:
         return None, "Figura nula"
+
+    ok, error_env = _asegurar_entorno_kaleido()
+    if not ok:
+        error_msg = f"Error Kaleido/Plotly: {error_env}"
+        print(f"[PDF] {error_msg}")
+        return None, error_msg
 
     try:
         # Ajustamos el layout exclusivamente para el PDF antes de generar imagen
@@ -1105,6 +1213,8 @@ def exportar_reporte_pdf(
     """
     if stats is None:
         stats = {}
+
+    _asegurar_entorno_kaleido()
         
     output = io.BytesIO()
 
