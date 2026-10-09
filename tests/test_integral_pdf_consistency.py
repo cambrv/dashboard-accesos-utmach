@@ -2,12 +2,33 @@ import pandas as pd
 
 import all_events_statistics_calc as ats
 import lpr_statistics_calc as lprs
-from all_events_pdf_report import _anonimizar_matricula, exportar_reporte_integral_pdf
+from all_events_pdf_report import (
+    CONTENT_WIDTH,
+    _anonimizar_matricula,
+    _tabla_estadistica,
+    _texto_espanol,
+    exportar_reporte_integral_pdf,
+)
 
 
 def test_matriculas_se_anonimizan_para_el_pdf():
     assert _anonimizar_matricula("ABC-1234") == "A*****4"
     assert _anonimizar_matricula("X1") == "***"
+
+
+def test_fechas_del_pdf_no_dependan_del_locale_del_servidor():
+    assert _texto_espanol("Tuesday 15/09") == "martes 15/09"
+    assert _texto_espanol("Monday, September 7") == "lunes, septiembre 7"
+
+
+def test_tablas_editoriales_respetan_el_ancho_util():
+    tabla = _tabla_estadistica(
+        [["Ubicación", "Eventos"], ["Acceso con un nombre deliberadamente largo", "123"]],
+        [3, 1],
+        columnas_numericas=(1,),
+    )
+    assert sum(tabla._colWidths) <= CONTENT_WIDTH + 0.01
+    assert tabla.repeatRows == 1
 
 
 def test_integral_pdf_uses_shared_lpr_metrics_and_generates_bytes():

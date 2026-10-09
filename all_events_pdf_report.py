@@ -3,20 +3,24 @@ Exportación a PDF del Reporte Integral ("Todos los Eventos").
 Este reporte compila el 100% de las gráficas de Eventos Exitosos + las nuevas gráficas de Tasas de Fallo.
 """
 import io
+import copy
 import pandas as pd
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from xml.sax.saxutils import escape
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle,
+    CondPageBreak,
+)
 from reportlab.lib.units import cm
-from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.styles import ParagraphStyle
 
 # Imports de base
 from pdf_report import (
-    ESTILO_TITULO, ESTILO_SUBTITULO, ESTILO_NORMAL, ESTILO_SECCION, ESTILO_CONCLUSION,
-    _agregar_grafico, _tabla_dataframe
+    FONT_NORMAL, FONT_BOLD, _agregar_grafico,
 )
 import visualizations as v
 from all_events_visualizations import (
@@ -27,6 +31,139 @@ from all_events_visualizations import (
     grafico_device_resultado
 )
 import re
+
+
+# Sistema editorial único del reporte integral. El área útil de A4 es 17 cm.
+PAGE_WIDTH, PAGE_HEIGHT = A4
+MARGIN_X = 2 * cm
+MARGIN_TOP = 2 * cm
+MARGIN_BOTTOM = 2 * cm
+CONTENT_WIDTH = PAGE_WIDTH - (2 * MARGIN_X)
+
+NAVY = colors.HexColor("#173B57")
+BLUE = colors.HexColor("#2F6F9F")
+TEXT = colors.HexColor("#263746")
+MUTED = colors.HexColor("#667783")
+LINE = colors.HexColor("#D5DEE5")
+PALE = colors.HexColor("#F3F6F8")
+ACCENT = colors.HexColor("#C56A2D")
+WHITE = colors.white
+
+ESTILO_TITULO = ParagraphStyle(
+    "IntegralSeccion", fontName=FONT_BOLD, fontSize=14.5, leading=18,
+    textColor=NAVY, spaceBefore=7, spaceAfter=9, keepWithNext=True,
+)
+ESTILO_SUBTITULO = ParagraphStyle(
+    "IntegralSubseccion", fontName=FONT_BOLD, fontSize=11.5, leading=14,
+    textColor=BLUE, spaceBefore=7, spaceAfter=5, keepWithNext=True,
+)
+ESTILO_NORMAL = ParagraphStyle(
+    "IntegralNormal", fontName=FONT_NORMAL, fontSize=9.5, leading=13.2,
+    textColor=TEXT, spaceAfter=5,
+)
+ESTILO_CONCLUSION = ParagraphStyle(
+    "IntegralHallazgo", parent=ESTILO_NORMAL, leftIndent=8, rightIndent=8,
+    borderColor=ACCENT, borderWidth=0, borderLeftWidth=2,
+    borderPadding=(3, 5, 3, 8), backColor=colors.HexColor("#FFF8F1"),
+    spaceBefore=3, spaceAfter=6,
+)
+ESTILO_CELDA = ParagraphStyle(
+    "IntegralCelda", fontName=FONT_NORMAL, fontSize=8.5, leading=10.5,
+    textColor=TEXT,
+)
+ESTILO_CELDA_NUM = ParagraphStyle(
+    "IntegralCeldaNumero", parent=ESTILO_CELDA, alignment=TA_RIGHT,
+)
+ESTILO_CABECERA = ParagraphStyle(
+    "IntegralCabeceraTabla", parent=ESTILO_CELDA, fontName=FONT_BOLD,
+    fontSize=8.7, leading=10.5, textColor=WHITE, alignment=TA_CENTER,
+)
+ESTILO_NOTA = ParagraphStyle(
+    "IntegralNota", parent=ESTILO_NORMAL, fontSize=8, leading=10.5,
+    textColor=MUTED, spaceBefore=3, spaceAfter=6,
+)
+
+_DIAS_ES = {
+    "Monday": "lunes", "Tuesday": "martes", "Wednesday": "miércoles",
+    "Thursday": "jueves", "Friday": "viernes", "Saturday": "sábado",
+    "Sunday": "domingo",
+}
+_MESES_ES = {
+    "January": "enero", "February": "febrero", "March": "marzo",
+    "April": "abril", "May": "mayo", "June": "junio", "July": "julio",
+    "August": "agosto", "September": "septiembre", "October": "octubre",
+    "November": "noviembre", "December": "diciembre",
+}
+
+
+def _texto_espanol(texto):
+    """Traduce nombres de días/meses sin depender del locale del servidor."""
+    resultado = str(texto)
+    for origen, destino in {**_DIAS_ES, **_MESES_ES}.items():
+        resultado = re.sub(rf"\b{origen}\b", destino, resultado, flags=re.IGNORECASE)
+    return resultado
+
+
+def _p(valor, estilo=ESTILO_CELDA):
+    texto = formatear_texto_pdf(_texto_espanol(valor if valor is not None else "—"))
+    return Paragraph(escape(str(texto)), estilo)
+
+
+def _tabla_estadistica(filas, proporciones, columnas_numericas=(), cabecera=BLUE):
+    """Construye una tabla legible cuyo ancho nunca excede el área imprimible."""
+    total = float(sum(proporciones))
+    anchos = [CONTENT_WIDTH * (valor / total) for valor in proporciones]
+    contenido = []
+    for numero_fila, fila in enumerate(filas):
+        contenido.append([
+            _p(valor, ESTILO_CABECERA if numero_fila == 0 else (
+                ESTILO_CELDA_NUM if columna in columnas_numericas else ESTILO_CELDA
+            ))
+            for columna, valor in enumerate(fila)
+        ])
+    tabla = Table(contenido, colWidths=anchos, repeatRows=1, hAlign="CENTER")
+    tabla.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), cabecera),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("GRID", (0, 0), (-1, -1), 0.35, LINE),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, PALE]),
+    ]))
+    return tabla
+
+
+def _tabla_indicadores(indicadores, columnas=4):
+    """Presenta indicadores como tarjetas; cada valor puede ajustar varias líneas."""
+    filas = []
+    for inicio in range(0, len(indicadores), columnas):
+        bloque = indicadores[inicio:inicio + columnas]
+        bloque += [("", "")] * (columnas - len(bloque))
+        filas.append([
+            Paragraph(
+                f"<font color='#667783' size='8'>{escape(formatear_texto_pdf(_texto_espanol(etiqueta)))}</font>"
+                f"<br/><font color='#173B57' size='12'><b>{escape(formatear_texto_pdf(_texto_espanol(valor)))}</b></font>",
+                ParagraphStyle(
+                    f"Indicador{inicio}{pos}", parent=ESTILO_CELDA,
+                    alignment=TA_CENTER, leading=15,
+                ),
+            )
+            for pos, (etiqueta, valor) in enumerate(bloque)
+        ])
+    tabla = Table(filas, colWidths=[CONTENT_WIDTH / columnas] * columnas, hAlign="CENTER")
+    tabla.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), PALE),
+        ("BOX", (0, 0), (-1, -1), 0.5, LINE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, WHITE),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 9),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+    ]))
+    return tabla
 
 def formatear_texto_pdf(texto):
     if not isinstance(texto, str):
@@ -61,80 +198,117 @@ def _anonimizar_matricula(valor):
 
 def _dibujar_pie_integral(canvas, doc, periodo):
     canvas.saveState()
-    canvas.setStrokeColor(colors.HexColor("#D5D8DC"))
-    canvas.line(2 * cm, 1.35 * cm, A4[0] - 2 * cm, 1.35 * cm)
-    canvas.setFont("Helvetica", 7.5)
-    canvas.setFillColor(colors.HexColor("#5D6D7E"))
-    canvas.drawString(2 * cm, 0.95 * cm, "Reporte Integral de Movilidad UTMACH")
-    canvas.drawCentredString(A4[0] / 2, 0.95 * cm, f"Período: {periodo}")
-    canvas.drawRightString(A4[0] - 2 * cm, 0.95 * cm, f"Página {doc.page}")
+    canvas.setStrokeColor(LINE)
+    canvas.line(MARGIN_X, 1.35 * cm, PAGE_WIDTH - MARGIN_X, 1.35 * cm)
+    canvas.setFont(FONT_NORMAL, 7.5)
+    canvas.setFillColor(MUTED)
+    canvas.drawString(MARGIN_X, 0.95 * cm, "Reporte Integral de Movilidad UTMACH")
+    canvas.drawCentredString(PAGE_WIDTH / 2, 0.95 * cm, f"Período: {periodo}")
+    canvas.drawRightString(PAGE_WIDTH - MARGIN_X, 0.95 * cm, f"Página {doc.page}")
     canvas.restoreState()
 
 def _agregar_portada_integral(story, fecha_min: str, fecha_max: str, titulo: str):
     """Genera la portada del reporte integral."""
-    story.append(Spacer(1, 2.0 * cm))
+    story.append(Spacer(1, 2.3 * cm))
     
     story.append(Paragraph("UNIVERSIDAD TÉCNICA DE MACHALA",
-        ParagraphStyle("Institucion", fontName="Helvetica-Bold", fontSize=14, textColor=colors.HexColor("#1B4F72"), alignment=TA_CENTER, spaceAfter=8)))
+        ParagraphStyle("Institucion", fontName=FONT_BOLD, fontSize=14, leading=18, textColor=NAVY, alignment=TA_CENTER, spaceAfter=8)))
     
     story.append(Paragraph("UNIDAD DE OBRAS E INFRAESTRUCTURA UNIVERSITARIA",
-        ParagraphStyle("Unidad", fontName="Helvetica", fontSize=10, textColor=colors.HexColor("#5D6D7E"), alignment=TA_CENTER, spaceAfter=35)))
+        ParagraphStyle("Unidad", fontName=FONT_NORMAL, fontSize=10, leading=14, textColor=MUTED, alignment=TA_CENTER, spaceAfter=30)))
     
     banda = Table(
         [[Paragraph(titulo.replace(" / ", "<br/>"),
-            ParagraphStyle("Banda", fontName="Helvetica-Bold", fontSize=19, leading=25, textColor=colors.white, alignment=TA_CENTER))]],
-        colWidths=[17 * cm], rowHeights=[3.0 * cm],
+            ParagraphStyle("Banda", fontName=FONT_BOLD, fontSize=20, leading=25, textColor=WHITE, alignment=TA_CENTER))]],
+        colWidths=[CONTENT_WIDTH], rowHeights=[3.0 * cm], hAlign="CENTER",
         style=[
-            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#1B4F72")),
+            ("BACKGROUND", (0, 0), (-1, -1), NAVY),
             ("ALIGN", (0, 0), (-1, -1), "CENTER"),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 18),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 18),
         ],
     )
     story.append(banda)
-    story.append(Spacer(1, 1.5 * cm))
-    
-    story.append(Paragraph("Reporte Integral Estadístico",
-        ParagraphStyle("Subtitulo", fontName="Helvetica-Bold", fontSize=14, textColor=colors.HexColor("#2C3E50"), alignment=TA_CENTER, spaceAfter=20)))
+    story.append(Spacer(1, 1.25 * cm))
     
     datos_fechas = [
-        ["Fecha de inicio:", fecha_min],
-        ["Fecha de fin:", fecha_max],
-        ["Fecha de generación:", _ahora_local().strftime("%d/%m/%Y %H:%M")],
-        ["Fuentes:", "HikCentral: biometría y reconocimiento LPR"],
-        ["Alcance:", "Análisis estadístico de eventos registrados; no identifica trayectos ni vehículos únicos"],
+        [_p("Período analizado"), _p(f"{fecha_min} – {fecha_max}")],
+        [_p("Fecha de generación"), _p(_ahora_local().strftime("%d/%m/%Y %H:%M"))],
+        [_p("Fuentes de información"), _p("HikCentral: biometría y reconocimiento LPR")],
+        [_p("Alcance del reporte"), _p("Análisis estadístico de eventos registrados; no identifica trayectos ni vehículos únicos.")],
     ]
-    tabla_fechas = Table(datos_fechas, colWidths=[6 * cm, 6 * cm], style=[
-        ("FONT", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONT", (1, 0), (1, -1), "Helvetica"),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
+    tabla_fechas = Table(datos_fechas, colWidths=[4.3 * cm, 10.5 * cm], hAlign="CENTER", style=[
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TEXTCOLOR", (0, 0), (-1, -1), colors.HexColor("#2C3E50")),
-        ("ALIGN", (0, 0), (0, -1), "RIGHT"),
-        ("ALIGN", (1, 0), (1, -1), "LEFT"),
+        ("FONTNAME", (0, 0), (0, -1), FONT_BOLD),
+        ("TEXTCOLOR", (0, 0), (0, -1), NAVY),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.35, LINE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
     ])
     story.append(tabla_fechas)
 
 def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dict, stats_nuevas: dict, conclusiones: list, calidad: dict, stats_gen_lpr: dict = None, df_lpr_f: pd.DataFrame = None, conclusiones_lpr: list = None, huella_dashboard: dict = None) -> io.BytesIO:
     buffer = io.BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=2*cm, leftMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm)
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4, rightMargin=MARGIN_X, leftMargin=MARGIN_X,
+        topMargin=MARGIN_TOP, bottomMargin=MARGIN_BOTTOM,
+        title="Reporte Integral de Movilidad UTMACH",
+        author="Universidad Técnica de Machala",
+    )
     story = []
     
     # 1. Portada
     fecha_min = df["Fecha"].min().strftime("%d/%m/%Y") if not df.empty and not pd.isna(df["Fecha"].min()) else "N/A"
     fecha_max = df["Fecha"].max().strftime("%d/%m/%Y") if not df.empty and not pd.isna(df["Fecha"].max()) else "N/A"
+
+    def hay_datos(diccionario, claves):
+        for clave in claves:
+            valor = diccionario.get(clave)
+            if valor is not None and (not hasattr(valor, "empty") or not valor.empty):
+                return True
+        return False
+
+    grupos_disponibles = {
+        "resumen": True,
+        "vehicular": True,
+        "biometrico": True,
+        "flujo": hay_datos(stats_base, ["flujo_consolidado", "entradas_salidas", "entradas_salidas_hora"]),
+        "distribucion": hay_datos(stats_base, ["flujo_ingreso", "flujo_punto_acceso"]),
+        "temporal": hay_datos(stats_base, ["heatmap_consolidado_hora", "flujo_diario", "flujo_hora", "ingreso_hora"]),
+        "mapas": hay_datos(stats_base, ["heatmap_punto_hora", "heatmap_dia_hora"]),
+        "usuarios": hay_datos(stats_base, ["tipo_usuario", "tipo_usuario_ingreso", "punto_tipo_usuario"]),
+        "resultados": hay_datos(stats_nuevas, ["resultados", "cruce_ingreso", "evolucion_diaria", "cruce_hora", "cruce_punto", "cruce_device"]),
+        "frecuencia": hay_datos(stats_base, ["frecuencia"]),
+        "lpr": stats_gen_lpr is not None and df_lpr_f is not None and not df_lpr_f.empty,
+        "metodologia": True,
+        "conclusiones": True,
+    }
+    titulos_seccion = {
+        "resumen": "Resumen ejecutivo y huella de movilidad",
+        "vehicular": "Análisis vehicular consolidado",
+        "biometrico": "Registros biométricos",
+        "flujo": "Flujo general consolidado",
+        "distribucion": "Distribución por categoría de acceso",
+        "temporal": "Comportamiento horario y diario",
+        "mapas": "Mapas de calor: puntos de acceso y días",
+        "usuarios": "Usuarios por tipo y punto de acceso",
+        "resultados": "Análisis de resultados y tasas de fallo",
+        "frecuencia": "Frecuencia de utilización",
+        "lpr": "Flujo vehicular LPR (reconocimiento de matrículas)",
+        "metodologia": "Metodología y limitaciones",
+        "conclusiones": "Conclusiones técnicas y recomendaciones",
+    }
+    claves_seccion = [clave for clave, disponible in grupos_disponibles.items() if disponible]
+    numeros_seccion = {clave: posicion for posicion, clave in enumerate(claves_seccion, start=1)}
+
     _agregar_portada_integral(story, fecha_min, fecha_max, "REPORTE INTEGRAL DE MOVILIDAD")
     story.append(PageBreak())
 
     story.append(Paragraph("Índice de secciones", ESTILO_TITULO))
-    indice = [
-        "1. Resumen ejecutivo y huella de movilidad",
-        "2. Análisis vehicular consolidado por mecanismo y carril",
-        "3. Registros biométricos",
-        "4. Distribución general y comportamiento temporal",
-        "5. Resultados y fallos biométricos",
-        "6. Análisis específico LPR",
-        "7. Metodología, limitaciones, conclusiones y recomendaciones",
-    ]
+    indice = [f"{numeros_seccion[clave]}. {titulos_seccion[clave]}" for clave in claves_seccion]
     for item in indice:
         story.append(Paragraph(item, ESTILO_NORMAL))
         story.append(Spacer(1, 0.12 * cm))
@@ -144,7 +318,7 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
     import lpr_statistics_calc as lprs
     huella = huella_dashboard if huella_dashboard is not None else lprs.generar_huella_movilidad(df, df_lpr_f)
     
-    story.append(Paragraph("1. Resumen ejecutivo y huella de movilidad", ESTILO_TITULO))
+    story.append(Paragraph(f"{numeros_seccion['resumen']}. {titulos_seccion['resumen']}", ESTILO_TITULO))
     story.append(Spacer(1, 0.5 * cm))
     
     texto_huella = (
@@ -165,30 +339,16 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
     story.append(Paragraph(formatear_texto_pdf(f"<font size=8 color='#5D6D7E'><i>{nota_metodologica}</i></font>"), ESTILO_NORMAL))
     story.append(Spacer(1, 0.5 * cm))
     
-    datos_huella = [
-        ["Registros Analizados", "Peatonales", "Terminales VEH", "Eventos LPR", "Día Pico", "Hora Pico", "Acceso Pico"],
-        [
-            f"{huella['tot_registros']:,}", 
-            f"{huella['tot_peatones_puros']:,}", 
-            f"{huella['tot_terminales_veh']:,}", 
-            f"{huella['tot_lpr']:,}",
-            formatear_texto_pdf(huella['dia_pico_str'].split(' — ')[0] if ' — ' in huella['dia_pico_str'] else huella['dia_pico_str']),
-            formatear_texto_pdf(huella['hora_pico_str'].split(' — ')[0] if ' — ' in huella['hora_pico_str'] else huella['hora_pico_str']),
-            formatear_texto_pdf(huella['acceso_pico_str'].split(' — ')[0] if ' — ' in huella['acceso_pico_str'] else huella['acceso_pico_str'])
-        ]
-    ]
-    tabla_huella = Table(datos_huella, style=[
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#3B82B8")),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, 0), 9),
-        ('FONTSIZE', (0, 1), (-1, 1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F8F9F9")),
-        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#D5D8DC")),
-    ])
-    story.append(tabla_huella)
+    extraer_resumen = lambda valor: str(valor).split(" — ")[0]
+    story.append(_tabla_indicadores([
+        ("Registros analizados", f"{huella['tot_registros']:,}"),
+        ("Peatonales", f"{huella['tot_peatones_puros']:,}"),
+        ("Terminales VEH", f"{huella['tot_terminales_veh']:,}"),
+        ("Eventos LPR", f"{huella['tot_lpr']:,}"),
+        ("Día pico", _texto_espanol(extraer_resumen(huella['dia_pico_str']))),
+        ("Hora pico", extraer_resumen(huella['hora_pico_str'])),
+        ("Acceso pico", extraer_resumen(huella['acceso_pico_str'])),
+    ], columnas=4))
     story.append(Spacer(1, 1 * cm))
 
     hallazgos_resumen = []
@@ -209,7 +369,7 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
     eventos_vehiculares = huella.get("eventos_vehiculares", pd.DataFrame())
     stats_veh = lprs.calcular_estadisticas_vehiculares_consolidadas(eventos_vehiculares)
     story.append(PageBreak())
-    story.append(Paragraph("2. Análisis vehicular consolidado", ESTILO_TITULO))
+    story.append(Paragraph(f"{numeros_seccion['vehicular']}. {titulos_seccion['vehicular']}", ESTILO_TITULO))
     story.append(Paragraph(
         "Se comparan eventos biométricos registrados en terminales VEH y eventos LPR depurados. "
         "Los mecanismos permanecen separados y se emplea la unidad eventos registrados.",
@@ -224,73 +384,74 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
             f"{stats_veh['dias'][mecanismo]:,}",
             f"{stats_veh['promedios'][mecanismo]:.2f}",
         ])
-    story.append(Table(resumen_veh, repeatRows=1, colWidths=[3.8*cm, 2.6*cm, 2.6*cm, 2.5*cm, 4.5*cm], style=[
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1B4F72")),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE', (0, 0), (-1, -1), 8),
-        ('ALIGN', (1, 1), (-1, -1), 'CENTER'),
-        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#BDC3C7")),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F8F9F9")),
-    ]))
+    story.append(_tabla_estadistica(resumen_veh, [3.7, 2.3, 2.3, 2.4, 4.3], (1, 2, 3, 4), NAVY))
     story.append(Spacer(1, 0.5 * cm))
 
     flujo_carril = stats_veh["flujo_por_carril"]
     if not flujo_carril.empty:
-        story.append(Paragraph("Intensidad real por carril", ESTILO_SUBTITULO))
-        tabla_carril = [[
-            "Mecanismo", "Ubicación", "Carril", "Sentido", "Eventos",
-            "Hora pico real", "Ev./min hora pico", "Máximo real/min", "Minuto máximo",
+        story.append(CondPageBreak(7 * cm))
+        story.append(Paragraph("Actividad registrada por carril", ESTILO_SUBTITULO))
+        actividad_carril = [["Ubicación", "Carril", "Sentido", "Mecanismo", "Eventos registrados"]]
+        intensidad_carril = [[
+            "Ubicación y carril", "Hora pico real", "Promedio durante la hora pico",
+            "Máximo en un minuto", "Minuto del máximo",
         ]]
         for fila in flujo_carril.itertuples():
-            tabla_carril.append([
-                fila.Mecanismo, fila.Ubicacion, fila.Carril, fila.Sentido, f"{fila.Eventos:,}",
-                fila.Hora_pico, f"{fila.Promedio_hora_pico_min:.2f}",
+            actividad_carril.append([
+                fila.Ubicacion, fila.Carril, fila.Sentido, fila.Mecanismo, f"{fila.Eventos:,}",
+            ])
+            intensidad_carril.append([
+                f"{fila.Ubicacion} · {fila.Carril}", fila.Hora_pico,
+                f"{fila.Promedio_hora_pico_min:.2f} eventos/min",
                 f"{fila.Maximo_observado_minuto:,}", fila.Minuto_maximo,
             ])
-        story.append(Table(tabla_carril, repeatRows=1, colWidths=[2.2*cm, 2.1*cm, 1*cm, 1.3*cm, 1.2*cm, 3.2*cm, 1.8*cm, 1.6*cm, 2.6*cm], style=[
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#3B82B8")),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 6.2),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor("#BDC3C7")),
-            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor("#F4F6F7")]),
-        ]))
+        story.append(_tabla_estadistica(actividad_carril, [3.6, 1.8, 2.2, 3.4, 2.4], (4,)))
+        story.append(CondPageBreak(7 * cm))
+        story.append(Paragraph("Intensidad y máximos por carril", ESTILO_SUBTITULO))
+        story.append(_tabla_estadistica(intensidad_carril, [4.0, 3.3, 3.0, 2.1, 3.1], (2, 3)))
         story.append(Paragraph(
-            "Hora pico real = fecha y hora concretas con más eventos del carril. Ev./min hora pico = eventos "
-            "de esa hora / 60; no es el promedio mensual de una franja.", ESTILO_NORMAL,
+            "Hora pico real = fecha y hora concretas con más eventos del carril. El promedio durante esa "
+            "hora se calcula con sus eventos divididos para 60; no representa el promedio mensual de una franja.",
+            ESTILO_NOTA,
         ))
 
     caudal = stats_veh["caudal_por_acceso"]
     if not caudal.empty:
+        story.append(CondPageBreak(7 * cm))
         story.append(Paragraph("Caudal simultáneo por acceso físico", ESTILO_SUBTITULO))
         tabla_caudal = [[
-            "Mecanismo", "Ubicación", "Sentido", "Carriles", "Minuto máximo",
-            "Caudal eventos/min", "Promedio/carril", "Media hora pico",
+            "Ubicación", "Sentido", "Mecanismo", "Carriles", "Minuto de mayor actividad conjunta",
+            "Eventos en ese minuto", "Promedio por carril",
         ]]
         for fila in caudal.itertuples():
             tabla_caudal.append([
-                fila.Mecanismo, fila.Ubicacion, fila.Sentido, fila.Carriles, fila.Minuto_maximo,
+                fila.Ubicacion, fila.Sentido, fila.Mecanismo, fila.Carriles, fila.Minuto_maximo,
                 f"{fila.Caudal_maximo_eventos_min:,}",
                 f"{fila.Promedio_por_carril_en_minuto_maximo:.2f}",
-                f"{fila.Promedio_conjunto_hora_pico_min:.2f}",
             ])
-        story.append(Table(tabla_caudal, repeatRows=1, colWidths=[2.3*cm, 2.2*cm, 1.5*cm, 1.5*cm, 3.4*cm, 2.2*cm, 2*cm, 1.9*cm], style=[
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1B4F72")),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 6.5),
-            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor("#BDC3C7")),
-        ]))
+        story.append(_tabla_estadistica(tabla_caudal, [2.7, 1.7, 2.5, 1.4, 3.6, 2.1, 2.2], (3, 5, 6), NAVY))
+        secundarios_caudal = [[
+            "Ubicación y sentido", "Mecanismo", "Hora pico real",
+            "Promedio conjunto en la hora pico", "Promedio por carril en la hora pico",
+        ]]
+        for fila in caudal.itertuples():
+            secundarios_caudal.append([
+                f"{fila.Ubicacion} · {fila.Sentido}", fila.Mecanismo, fila.Hora_pico,
+                f"{fila.Promedio_conjunto_hora_pico_min:.2f}",
+                f"{fila.Promedio_por_carril_hora_pico_min:.2f}",
+            ])
+        story.append(CondPageBreak(6 * cm))
+        story.append(Paragraph("Estadísticas de la hora pico conjunta", ESTILO_SUBTITULO))
+        story.append(_tabla_estadistica(secundarios_caudal, [3.5, 2.5, 3.0, 3.2, 3.2], (3, 4)))
         story.append(Paragraph(
             "Los carriles se alinean por el mismo minuto calendario antes de sumarse. No se suman máximos "
-            "ocurridos en momentos distintos.", ESTILO_NORMAL,
+            "ocurridos en momentos distintos. El promedio por carril corresponde exclusivamente al minuto "
+            "de mayor actividad conjunta.", ESTILO_NOTA,
         ))
     
     # 3. Resumen de Registros Biométricos
-    story.append(PageBreak())
-    story.append(Paragraph("3. Resumen de registros biométricos", ESTILO_TITULO))
+    story.append(CondPageBreak(8 * cm))
+    story.append(Paragraph(f"{numeros_seccion['biometrico']}. {titulos_seccion['biometrico']}", ESTILO_TITULO))
     story.append(Spacer(1, 0.2 * cm))
     story.append(Paragraph("Se analizan los registros generados mediante los terminales biométricos del sistema, diferenciando los asociados a ingresos peatonales y a ingresos vehiculares.", ESTILO_NORMAL))
     story.append(Spacer(1, 0.5 * cm))
@@ -309,16 +470,7 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
         ["Tasa de Éxito", f"{tasas.get('tasa_exito', 0):.2f}%"],
         ["Tasa de Fallo General", f"{tasas.get('tasa_fallo_general', 0):.2f}%"]
     ]
-    tabla_indicadores = Table(datos_indicadores, colWidths=[8*cm, 6*cm], style=[
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#2C3E50")),
-        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
-        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F2F4F4")),
-        ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#BDC3C7")),
-    ])
-    story.append(tabla_indicadores)
+    story.append(_tabla_estadistica(datos_indicadores, [9, 5], (1,), NAVY))
     story.append(Spacer(1, 1 * cm))
     
     # 4. Flujo General Consolidado
@@ -329,12 +481,23 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
     def safe_add_grafico(story, fig, alto=8 * cm):
         if fig is not None:
             try:
-                _agregar_grafico(story, fig, alto=alto)
+                figura_pdf = copy.deepcopy(fig)
+                figura_pdf.update_layout(
+                    font=dict(family="Segoe UI, Helvetica, Arial, sans-serif", size=12, color="#263746"),
+                    paper_bgcolor="white", plot_bgcolor="white",
+                    margin=dict(l=70, r=35, t=70, b=70),
+                    legend=dict(font=dict(size=11)),
+                )
+                figura_pdf.update_xaxes(automargin=True, title_font=dict(size=12), tickfont=dict(size=10))
+                figura_pdf.update_yaxes(automargin=True, title_font=dict(size=12), tickfont=dict(size=10))
+                _agregar_grafico(story, figura_pdf, ancho=CONTENT_WIDTH, alto=alto)
             except Exception as e:
                 story.append(Paragraph(f"<font color='red'>Error al renderizar gráfico: {str(e)}</font>", ESTILO_NORMAL))
 
-    story.append(Paragraph("3. Flujo General Consolidado", ESTILO_TITULO))
-    story.append(Spacer(1, 0.5 * cm))
+    if grupos_disponibles["flujo"]:
+        story.append(CondPageBreak(9 * cm))
+        story.append(Paragraph(f"{numeros_seccion['flujo']}. {titulos_seccion['flujo']}", ESTILO_TITULO))
+        story.append(Spacer(1, 0.5 * cm))
     
     if "flujo_consolidado" in stats_base and not stats_base["flujo_consolidado"].empty:
         fig = v.grafico_flujo_consolidado(stats_base["flujo_consolidado"])
@@ -350,11 +513,10 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
         fig = v.grafico_entradas_salidas_hora(stats_base["entradas_salidas_hora"])
         safe_add_grafico(story, fig)
 
-    story.append(PageBreak())
-
-    # 5. Distribución Detallada por Categoría de Acceso
-    story.append(Paragraph("4. Distribución general de registros por categoría de acceso", ESTILO_TITULO))
-    story.append(Spacer(1, 0.5 * cm))
+    if grupos_disponibles["distribucion"]:
+        story.append(CondPageBreak(9 * cm))
+        story.append(Paragraph(f"{numeros_seccion['distribucion']}. {titulos_seccion['distribucion']}", ESTILO_TITULO))
+        story.append(Spacer(1, 0.5 * cm))
     
     if "flujo_ingreso" in stats_base and not stats_base["flujo_ingreso"].empty:
         fig = v.grafico_ingreso(stats_base["flujo_ingreso"])
@@ -365,11 +527,10 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
         fig = v.grafico_flujo_punto_acceso(stats_base["flujo_punto_acceso"])
         safe_add_grafico(story, fig)
 
-    story.append(PageBreak())
-    
-    # 6. Comportamiento Horario Consolidado y Detallado
-    story.append(Paragraph("5. Comportamiento Horario y Diario", ESTILO_TITULO))
-    story.append(Spacer(1, 0.5 * cm))
+    if grupos_disponibles["temporal"]:
+        story.append(CondPageBreak(9 * cm))
+        story.append(Paragraph(f"{numeros_seccion['temporal']}. {titulos_seccion['temporal']}", ESTILO_TITULO))
+        story.append(Spacer(1, 0.5 * cm))
     
     if "heatmap_consolidado_hora" in stats_base and not stats_base["heatmap_consolidado_hora"].empty:
         fig = v.grafico_heatmap_consolidado_hora(stats_base["heatmap_consolidado_hora"])
@@ -379,7 +540,7 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
     if "flujo_diario" in stats_base and not stats_base["flujo_diario"].empty:
         fig = v.grafico_flujo_diario(stats_base["flujo_diario"])
         safe_add_grafico(story, fig)
-        story.append(PageBreak())
+        story.append(CondPageBreak(9 * cm))
         
     if "flujo_hora" in stats_base and not stats_base["flujo_hora"].empty:
         fig = v.grafico_flujo_hora(stats_base["flujo_hora"])
@@ -390,11 +551,10 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
         fig = v.grafico_ingreso_hora(stats_base["ingreso_hora"])
         safe_add_grafico(story, fig)
         
-    story.append(PageBreak())
-    
-    # 7. Mapas de Calor Adicionales
-    story.append(Paragraph("6. Mapas de Calor: Puntos de Acceso y Días", ESTILO_TITULO))
-    story.append(Spacer(1, 0.5 * cm))
+    if grupos_disponibles["mapas"]:
+        story.append(CondPageBreak(9 * cm))
+        story.append(Paragraph(f"{numeros_seccion['mapas']}. {titulos_seccion['mapas']}", ESTILO_TITULO))
+        story.append(Spacer(1, 0.5 * cm))
     
     if "heatmap_punto_hora" in stats_base and not stats_base["heatmap_punto_hora"].empty:
         fig = v.grafico_heatmap_punto_hora(stats_base["heatmap_punto_hora"])
@@ -405,11 +565,10 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
         fig = v.grafico_heatmap_dia_hora(stats_base["heatmap_dia_hora"])
         safe_add_grafico(story, fig)
 
-    story.append(PageBreak())
-    
-    # 8. Usuarios por Tipo
-    story.append(Paragraph("7. Usuarios por Tipo y Punto de Acceso", ESTILO_TITULO))
-    story.append(Spacer(1, 0.5 * cm))
+    if grupos_disponibles["usuarios"]:
+        story.append(CondPageBreak(9 * cm))
+        story.append(Paragraph(f"{numeros_seccion['usuarios']}. {titulos_seccion['usuarios']}", ESTILO_TITULO))
+        story.append(Spacer(1, 0.5 * cm))
     
     if "tipo_usuario" in stats_base and not stats_base["tipo_usuario"].empty:
         fig = v.grafico_tipo_usuario(stats_base["tipo_usuario"])
@@ -419,7 +578,7 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
     if "tipo_usuario_ingreso" in stats_base and not stats_base["tipo_usuario_ingreso"].empty:
         fig = v.grafico_tipo_usuario_ingreso(stats_base["tipo_usuario_ingreso"])
         safe_add_grafico(story, fig)
-        story.append(PageBreak())
+        story.append(CondPageBreak(9 * cm))
         
     if "punto_tipo_usuario" in stats_base and not stats_base["punto_tipo_usuario"].empty:
         fig = v.grafico_punto_tipo_usuario(stats_base["punto_tipo_usuario"])
@@ -427,8 +586,10 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
         story.append(Spacer(1, 0.5 * cm))
 
     # 9. Análisis de Tasas de Fallo y Éxito
-    story.append(Paragraph("8. Análisis de Resultados y Tasas de Fallo", ESTILO_TITULO))
-    story.append(Spacer(1, 0.5 * cm))
+    if grupos_disponibles["resultados"]:
+        story.append(CondPageBreak(9 * cm))
+        story.append(Paragraph(f"{numeros_seccion['resultados']}. {titulos_seccion['resultados']}", ESTILO_TITULO))
+        story.append(Spacer(1, 0.5 * cm))
     
     if "resultados" in stats_nuevas and not stats_nuevas["resultados"].empty:
         fig = atv.grafico_resultados_generales(stats_nuevas["resultados"])
@@ -438,7 +599,7 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
     if "cruce_ingreso" in stats_nuevas and not stats_nuevas["cruce_ingreso"].empty:
         fig = atv.grafico_cruce_ingreso_resultado(stats_nuevas["cruce_ingreso"])
         safe_add_grafico(story, fig)
-        story.append(PageBreak())
+        story.append(CondPageBreak(9 * cm))
         
     if "evolucion_diaria" in stats_nuevas and not stats_nuevas["evolucion_diaria"].empty:
         fig = atv.grafico_evolucion_resultado(stats_nuevas["evolucion_diaria"])
@@ -475,15 +636,9 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
                 f"{int(fila['Fallo de reconocimiento']):,}", f"{int(fila['Denegado']):,}",
                 f"{int(fila['Fallos_y_denegados']):,}", f"{float(fila['Tasa_Fallo']):.2f}%",
             ])
+        story.append(CondPageBreak(7 * cm))
         story.append(Paragraph("Dispositivos con mayor cantidad de resultados adversos", ESTILO_SUBTITULO))
-        story.append(Table(tabla_dispositivos, repeatRows=1, colWidths=[5.8*cm, 2*cm, 3*cm, 2*cm, 2.2*cm, 2*cm], style=[
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#1B4F72")),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 7),
-            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-            ('GRID', (0, 0), (-1, -1), 0.4, colors.HexColor("#BDC3C7")),
-        ]))
+        story.append(_tabla_estadistica(tabla_dispositivos, [5.3, 1.8, 2.8, 1.8, 2.1, 2.0], (1, 2, 3, 4, 5), NAVY))
         story.append(Paragraph(
             "El orden usa cantidades absolutas y luego volumen total, evitando priorizar porcentajes altos con "
             "muestras pequeñas. Una tasa elevada identifica un punto para verificación; no demuestra por sí sola "
@@ -506,30 +661,31 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
         except Exception as e:
             story.append(Paragraph(f"<font color='red'>Error al renderizar gráfico devices: {str(e)}</font>", ESTILO_NORMAL))
 
-    story.append(PageBreak())
-    
-    # 10. Frecuencia
-    story.append(Paragraph("9. Frecuencia de Utilización", ESTILO_TITULO))
-    story.append(Spacer(1, 0.5 * cm))
+    if grupos_disponibles["frecuencia"]:
+        story.append(CondPageBreak(9 * cm))
+        story.append(Paragraph(f"{numeros_seccion['frecuencia']}. {titulos_seccion['frecuencia']}", ESTILO_TITULO))
+        story.append(Spacer(1, 0.5 * cm))
     
     if "frecuencia" in stats_base and not stats_base["frecuencia"].empty:
         fig = v.grafico_frecuencia(stats_base["frecuencia"])
         safe_add_grafico(story, fig)
 
-    story.append(PageBreak())
+    if grupos_disponibles["lpr"]:
+        story.append(CondPageBreak(9 * cm))
 
     # 11. Analítica Avanzada LPR
     if stats_gen_lpr is not None and df_lpr_f is not None and not df_lpr_f.empty:
-        story.append(Paragraph("10. Flujo Vehicular LPR (Reconocimiento de Placas)", ESTILO_TITULO))
+        story.append(Paragraph(f"{numeros_seccion['lpr']}. {titulos_seccion['lpr']}", ESTILO_TITULO))
         story.append(Spacer(1, 0.5 * cm))
         
         import lpr_statistics_calc as lprs
-        texto_resumen = lprs.generar_texto_resumen_ejecutivo(df_lpr_f, stats_gen_lpr)
+        texto_resumen = _texto_espanol(lprs.generar_texto_resumen_ejecutivo(df_lpr_f, stats_gen_lpr))
         story.append(Paragraph(formatear_texto_pdf(texto_resumen).replace('\n', '<br/>'), ESTILO_NORMAL))
         story.append(Spacer(1, 0.5 * cm))
-        
+
+        story.append(Paragraph("Resumen general LPR", ESTILO_SUBTITULO))
         datos_lpr = [
-            ["Eventos Válidos", "Placas Únicas", "Entradas", "Salidas"],
+            ["Eventos válidos", "Matrículas únicas", "Entradas", "Salidas"],
             [
                 f"{stats_gen_lpr.get('eventos_validos', 0):,}",
                 f"{stats_gen_lpr.get('placas_unicas', 0):,}",
@@ -537,36 +693,22 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
                 f"{stats_gen_lpr.get('salidas', 0):,}"
             ]
         ]
-        tabla_lpr = Table(datos_lpr, colWidths=[4*cm, 4*cm, 4*cm, 4*cm], style=[
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#3B82B8")),
-            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 10),
-            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor("#F8F9F9")),
-            ('GRID', (0, 0), (-1, -1), 1, colors.HexColor("#D5D8DC")),
-        ])
-        story.append(tabla_lpr)
+        story.append(_tabla_estadistica(datos_lpr, [1, 1, 1, 1], (0, 1, 2, 3)))
         story.append(Spacer(1, 0.5 * cm))
 
         resumen_entradas = lprs.resumen_entradas_vehiculares(df_lpr_f)
         pico = resumen_entradas.get("fecha_pico")
+        story.append(Paragraph("Actividad diaria LPR", ESTILO_SUBTITULO))
         datos_entradas = [
-            ["Entradas registradas", "Días con datos", "Promedio diario", "Día de mayor ingreso"],
+            ["Días con registros", "Promedio diario de entradas", "Fecha de mayor ingreso", "Entradas en ese día"],
             [
-                f"{resumen_entradas['total_entradas']:,}",
                 f"{resumen_entradas['dias_con_datos']:,}",
                 f"{resumen_entradas['promedio_diario']:.2f}",
-                (f"{pico.strftime('%d/%m/%Y')} ({resumen_entradas['entradas_pico']:,})" if pico else "Sin entradas"),
+                (pico.strftime('%d/%m/%Y') if pico else "Sin entradas"),
+                (f"{resumen_entradas['entradas_pico']:,}" if pico else "—"),
             ],
         ]
-        story.append(Table(datos_entradas, colWidths=[4*cm]*4, style=[
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#DDEBF7")),
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 8),
-            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#AAB7B8")),
-        ]))
+        story.append(_tabla_estadistica(datos_entradas, [1, 1.3, 1.2, 1], (0, 1, 3), NAVY))
         story.append(Paragraph(
             formatear_texto_pdf("<font size=8>Promedio diario = entradas LPR depuradas / días con datos LPR del contexto filtrado.</font>"),
             ESTILO_NORMAL,
@@ -594,7 +736,7 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
         fig = lprv.grafico_lpr_por_dia(df_dia, theme="light")
         safe_add_grafico(story, fig)
         
-        story.append(PageBreak())
+        story.append(CondPageBreak(9 * cm))
         
         df_heatmap = lprs.stats_heatmap_dia_hora(df_lpr_f)
         fig = lprv.grafico_heatmap_lpr(df_heatmap, theme="light")
@@ -614,15 +756,9 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
             ]
             story.append(Spacer(1, 0.5 * cm))
             story.append(Paragraph("Entradas y salidas por ubicación", ESTILO_SUBTITULO))
-            story.append(Table(tabla_movimientos, colWidths=[6*cm, 5*cm, 4*cm], style=[
-                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#DDEBF7")),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 8),
-                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor("#AAB7B8")),
-            ]))
+            story.append(_tabla_estadistica(tabla_movimientos, [6, 5, 4], (2,)))
             
-        story.append(PageBreak())
+        story.append(CondPageBreak(9 * cm))
             
         df_top = lprs.stats_lpr_top_placas(df_lpr_f, 10)
         if not df_top.empty:
@@ -631,8 +767,8 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
             fig = lprv.grafico_top_placas(df_top, theme="light")
             safe_add_grafico(story, fig)
 
-    story.append(PageBreak())
-    story.append(Paragraph("11. Metodología y limitaciones", ESTILO_TITULO))
+    story.append(CondPageBreak(9 * cm))
+    story.append(Paragraph(f"{numeros_seccion['metodologia']}. {titulos_seccion['metodologia']}", ESTILO_TITULO))
     metodologia = [
         "Fuentes: exportaciones de HikCentral Professional para eventos biométricos y reconocimiento LPR.",
         "Biométrico peatonal, biométrico VEH y LPR se clasifican como mecanismos distintos. Un evento facial en un terminal VEH no prueba por sí solo el paso de un vehículo.",
@@ -647,7 +783,8 @@ def exportar_reporte_integral_pdf(df: pd.DataFrame, tasas: dict, stats_base: dic
         story.append(Paragraph(formatear_texto_pdf(f"• {texto}"), ESTILO_NORMAL))
 
     story.append(Spacer(1, 0.4 * cm))
-    story.append(Paragraph("12. Conclusiones técnicas y recomendaciones", ESTILO_TITULO))
+    story.append(CondPageBreak(7 * cm))
+    story.append(Paragraph(f"{numeros_seccion['conclusiones']}. {titulos_seccion['conclusiones']}", ESTILO_TITULO))
     conclusiones_tecnicas = []
     if not eventos_vehiculares.empty and not stats_veh["flujo_por_carril"].empty:
         top_carril = stats_veh["flujo_por_carril"].loc[stats_veh["flujo_por_carril"]["Eventos"].idxmax()]

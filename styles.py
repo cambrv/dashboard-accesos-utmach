@@ -51,6 +51,7 @@ CSS_DASHBOARD = f"""
        ================================================================ */
 
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0,0');
 
     /* Aplicar tipografía base de forma segura sin romper iconos */
     html, body, .stApp, .main, [data-testid="stAppViewContainer"] {{
@@ -68,6 +69,9 @@ CSS_DASHBOARD = f"""
     .material-symbols-rounded, 
     [class*="stIconMaterial"] {{
         font-family: 'Material Symbols Rounded' !important;
+        font-style: normal;
+        font-weight: 400;
+        font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
     }}
 
     .stApp {{

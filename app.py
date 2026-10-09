@@ -18,6 +18,7 @@ import glob
 import hashlib
 import uuid
 from datetime import datetime
+from html import escape
 
 from config import APP_TITULO, APP_ICON, APP_LAYOUT
 from statistics_calc import (
@@ -165,20 +166,143 @@ from dashboard_filters import (
     aplicar_filtros_integrales,
     mecanismo_incluido,
 )
-from load_progress import LiveElapsedTimer, LoadProgress
+from time import perf_counter
+from dashboard_help import mostrar_boton_guia_sidebar
 
+
+CLAVES_WIDGET_FILTROS_TODOS = (
+    "filt_fechas_todos",
+    "filt_res",
+    "filt_ingreso_todos",
+    "filt_tipo_usu_todos",
+    "filt_ubicacion_todos",
+    "filt_mecanismo_todos",
+    "filt_punto_todos",
+    "filt_movimiento_todos",
+)
+
+
+class ProgresoCargaSimple:
+    """Indicador de etapas con un único tiempo total."""
+
+    def __init__(self, estado):
+        self.estado = estado
+        self.inicio = perf_counter()
+        self.failed = False
+
+    def start_stage(self, mensaje, indeterminate=False):
+        self.estado.update(
+            label=f"Procesando archivos · {mensaje}",
+            state="running",
+        )
+
+    def finish_stage(self, porcentaje, mensaje):
+        # Se conserva la firma para no modificar las llamadas existentes.
+        # Los porcentajes internos ya no se muestran.
+        self.estado.update(
+            label=f"Procesando archivos · {mensaje}",
+            state="running",
+        )
+
+    def complete(self, mensaje="Archivos procesados correctamente"):
+        tiempo = perf_counter() - self.inicio
+        self.estado.update(
+            label=f"{mensaje} en {tiempo:.1f} segundos",
+            state="complete",
+            expanded=False,
+        )
+
+    def fail(self, mensaje):
+        self.failed = True
+        self.estado.update(
+            label=mensaje,
+            state="error",
+            expanded=True,
+        )
 
 def configurar_tema_interfaz():
-    """Renderiza el selector de tema sin afectar los datos cargados."""
+    """Inyecta el tema antes de renderizar cualquier componente visual."""
     st.session_state.setdefault("tema_app", "Claro")
-    with st.sidebar:
-        st.radio(
-            ":material/palette: Apariencia",
-            options=["Claro", "Oscuro"],
-            horizontal=True,
-            key="tema_app",
-        )
     aplicar_estilos(obtener_tema_actual())
+
+
+# def mostrar_selector_tema_sidebar() -> None:
+#     """Mantiene el selector de apariencia compacto y fuera de los filtros."""
+#     with st.sidebar.expander("Apariencia", icon=":material/palette:"):
+#         st.radio(
+#             "Tema",
+#             options=["Claro", "Oscuro"],
+#             horizontal=True,
+#             key="tema_app",
+#             label_visibility="collapsed",
+#         )
+
+
+def _etiqueta_rol(rol: str) -> str:
+    """Convierte el rol técnico de autenticación en una etiqueta institucional."""
+    etiquetas = {"admin": "Administrador", "viewer": "Visor"}
+    valor = str(rol or "viewer").strip().lower()
+    return etiquetas.get(valor, valor.replace("_", " ").title())
+
+
+def mostrar_encabezado_sidebar() -> None:
+    """Renderiza una identidad institucional compacta."""
+    st.sidebar.markdown("### Accesos UTMACH")
+    st.sidebar.caption("Panel institucional")
+
+
+def mostrar_acceso_guia_sidebar() -> None:
+    """Muestra el panel activo y el acceso modal a la guía."""
+    st.sidebar.caption("ESPACIO DE TRABAJO")
+    st.sidebar.button(
+        "Panel de análisis",
+        icon=":material/dashboard:",
+        type="primary",
+        width="stretch",
+        key="panel_analisis_actual",
+    )
+    with st.sidebar:
+        mostrar_boton_guia_sidebar()
+
+
+def limpiar_estado_datos_sesion(_evento=None) -> None:
+    """Elimina datos institucionales de esta sesión cuando el usuario sale."""
+    claves_exactas = {
+        "_cache_scope",
+        "_biometrico_preparado",
+        "_lpr_preparado",
+        "_analitica_integral",
+        "_conjunto_filtros_todos",
+        "_borrador_filtros_todos",
+        "filtros_aplicados_todos",
+        "pdf_bytes",
+        "reporte_excel_bytes",
+        "dataset_filtrado_bytes",
+        "uploader_todos",
+        "uploader_lpr",
+        "rol",
+    }
+    prefijos = ("filt_",)
+    for clave in list(st.session_state):
+        if clave in claves_exactas or clave.startswith(prefijos):
+            del st.session_state[clave]
+
+
+def mostrar_perfil_sidebar(authenticator) -> None:
+    """Muestra la identidad autenticada al final de los controles del sidebar."""
+    nombre = escape(str(st.session_state.get("name") or "Usuario"))
+    rol = escape(_etiqueta_rol(st.session_state.get("rol", "viewer")))
+    st.sidebar.divider()
+    with st.sidebar.container(border=True):
+        st.markdown(f":material/person: **{nombre}**")
+        st.caption(f"Rol: {rol}")
+    authenticator.logout(
+        "Cerrar sesión",
+        "sidebar",
+        key="cerrar_sesion",
+        use_container_width=True,
+        callback=limpiar_estado_datos_sesion,
+    )
 
 
 def restablecer_widgets(valores: dict):
@@ -295,12 +419,32 @@ def _aplicar_filtros_todos_desde_widgets():
         "puntos_acceso": list(st.session_state.get("filt_punto_todos", [])),
         "movimientos": list(st.session_state.get("filt_movimiento_todos", [])),
     }
+    _guardar_borrador_filtros_todos()
+
+
+def _guardar_borrador_filtros_todos() -> None:
+    """Conserva controles que Streamlit retirará al desmontar la vista del panel."""
+    valores = {
+        clave: st.session_state[clave]
+        for clave in CLAVES_WIDGET_FILTROS_TODOS
+        if clave in st.session_state
+    }
+    if valores:
+        st.session_state["_borrador_filtros_todos"] = valores
+
+
+def _restaurar_borrador_filtros_todos() -> None:
+    """Restaura el borrador cuando los widgets vuelven a montarse."""
+    for clave, valor in st.session_state.get("_borrador_filtros_todos", {}).items():
+        if clave not in st.session_state:
+            st.session_state[clave] = valor
 
 
 def _restablecer_filtros_todos(valores_widgets: dict, filtros_aplicados: dict):
     """Limpia a la vez etiquetas visibles y resultados aplicados."""
     restablecer_widgets(valores_widgets)
     st.session_state["filtros_aplicados_todos"] = filtros_aplicados.copy()
+    st.session_state["_borrador_filtros_todos"] = valores_widgets.copy()
 
 def formato_numero(n) -> str:
     """Formatea un número con separador de miles."""
@@ -438,30 +582,30 @@ def mostrar_seccion(titulo: str, icono: str = "analytics"):
         st.caption(descripcion)
 
 
-def mostrar_contexto_resultados(df_biometrico=None, df_lpr=None, mecanismos=None):
-    """Muestra una sola vez el contexto que realmente participa en los resultados."""
-    partes = [df for df in [df_biometrico, df_lpr] if df is not None and not df.empty]
-    fechas = []
-    ubicaciones = set()
-    for parte in partes:
-        if "Fecha" in parte.columns:
-            fechas.extend(pd.to_datetime(parte["Fecha"], errors="coerce").dropna().tolist())
-        if "Ubicacion_Ingreso" in parte.columns:
-            ubicaciones.update(
-                parte["Ubicacion_Ingreso"].dropna().astype(str).loc[
-                    lambda s: s.isin(["25 de Junio", "Ferroviaria"])
-                ]
-            )
-    periodo = "Sin fechas disponibles"
-    if fechas:
-        periodo = f"{min(fechas):%d/%m/%Y} al {max(fechas):%d/%m/%Y}"
-    ubicacion = ", ".join(sorted(ubicaciones)) if ubicaciones else "Todas las disponibles"
-    mecanismo = ", ".join(mecanismos) if mecanismos else "Registros biométricos"
-    st.info(
-        f"Contexto aplicado: período {periodo} | Ubicación: {ubicacion} | "
-        f"Mecanismo: {mecanismo}. Los valores corresponden a los filtros ya aplicados.",
-        icon=":material/filter_alt:",
-    )
+# def mostrar_contexto_resultados(df_biometrico=None, df_lpr=None, mecanismos=None):
+#     """Muestra una sola vez el contexto que realmente participa en los resultados."""
+#     partes = [df for df in [df_biometrico, df_lpr] if df is not None and not df.empty]
+#     fechas = []
+#     ubicaciones = set()
+#     for parte in partes:
+#         if "Fecha" in parte.columns:
+#             fechas.extend(pd.to_datetime(parte["Fecha"], errors="coerce").dropna().tolist())
+#         if "Ubicacion_Ingreso" in parte.columns:
+#             ubicaciones.update(
+#                 parte["Ubicacion_Ingreso"].dropna().astype(str).loc[
+#                     lambda s: s.isin(["25 de Junio", "Ferroviaria"])
+#                 ]
+#             )
+#     periodo = "Sin fechas disponibles"
+#     if fechas:
+#         periodo = f"{min(fechas):%d/%m/%Y} al {max(fechas):%d/%m/%Y}"
+#     ubicacion = ", ".join(sorted(ubicaciones)) if ubicaciones else "Todas las disponibles"
+#     mecanismo = ", ".join(mecanismos) if mecanismos else "Registros biométricos"
+#     st.info(
+#         f"Contexto aplicado: período {periodo} | Ubicación: {ubicacion} | "
+#         f"Mecanismo: {mecanismo}. Los valores corresponden a los filtros ya aplicados.",
+#         icon=":material/filter_alt:",
+#     )
 
 
 def _calcular_analitica_integral(df_f, df_todos, df_consolidado_total, filtros_aplicados):
@@ -929,10 +1073,10 @@ def ejecutar_modo_exitoso():
         st.warning("No hay datos para los filtros seleccionados. Ajuste los filtros.")
         st.stop()
 
-    mostrar_contexto_resultados(
-        df_biometrico=df_filtrado,
-        mecanismos=["Biométrico"],
-    )
+    # mostrar_contexto_resultados(
+    #     df_biometrico=df_filtrado,
+    #     mecanismos=["Biométrico"],
+    # )
 
     # ─── 1. Métricas principales ─────────────────────────────────────────
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -1471,10 +1615,10 @@ def ejecutar_modo_fallidos():
         st.warning("No hay datos que coincidan con los filtros seleccionados.")
         st.stop()
 
-    mostrar_contexto_resultados(
-        df_biometrico=df_f,
-        mecanismos=["Eventos biométricos anormales"],
-    )
+    # mostrar_contexto_resultados(
+    #     df_biometrico=df_f,
+    #     mecanismos=["Eventos biométricos anormales"],
+    # )
         
     # ─── Cálculos ───
     stats = {
@@ -1540,19 +1684,22 @@ def ejecutar_modo_fallidos():
 # APLICACIÓN PRINCIPAL - MODO TODOS LOS EVENTOS
 # ═════════════════════════════════════════════════════════════════════════════
 
-def ejecutar_modo_todos():
+def ejecutar_modo_todos(archivo_subido=None, archivo_lpr=None, mostrar_cargadores=True):
     st.title(":material/dashboard: Sistema de Accesos UTMACH")
     st.markdown("Cargue los archivos correspondientes a eventos biométricos y vehiculares. El análisis biométrico es obligatorio.")
-    
-    col_bio, col_lpr = st.columns(2)
-    with col_bio:
-        archivo_subido = st.file_uploader(":material/upload_file: Eventos biométricos (obligatorio)", type=["xlsx"], key="uploader_todos")
-    with col_lpr:
-        archivo_lpr = st.file_uploader(":material/directions_car: Eventos vehiculares LPR (opcional)", type=["xlsx"], key="uploader_lpr")
+
+    # La llamada directa conserva el diseño histórico. En la aplicación autenticada
+    # los mismos widgets viven permanentemente en el sidebar y se pasan aquí.
+    if mostrar_cargadores:
+        col_bio, col_lpr = st.columns(2)
+        with col_bio:
+            archivo_subido = st.file_uploader(":material/upload_file: Eventos biométricos (obligatorio)", type=["xlsx"], key="uploader_todos")
+        with col_lpr:
+            archivo_lpr = st.file_uploader(":material/directions_car: Eventos vehiculares LPR (opcional)", type=["xlsx"], key="uploader_lpr")
     
     if not archivo_subido:
         st.info("Esperando archivo. Por favor, suba el archivo Excel de Eventos Biométricos (.xlsx) para continuar.")
-        st.stop()
+        return
 
     archivo_biometrico_id = _archivo_id(archivo_subido)
     archivo_lpr_id = _archivo_id(archivo_lpr) if archivo_lpr is not None else None
@@ -1565,25 +1712,18 @@ def ejecutar_modo_todos():
         cache_lpr and cache_lpr["archivo_id"] == archivo_lpr_id
     )
 
+
     progreso_carga = None
+
     if not (biometrico_en_sesion and lpr_en_sesion):
         estado_carga = st.status(
-            "Preparando archivos de acceso",
+            "Preparando archivos del sistema...",
             state="running",
-            expanded=True,
+            expanded=False,
         )
-        barra_carga = estado_carga.progress(
-            0,
-            text="**0%** · Validando archivos seleccionados",
-        )
-        cronometro_carga = LiveElapsedTimer(estado_carga)
-        progreso_carga = LoadProgress(
-            estado_carga,
-            barra_carga,
-            live_timer=cronometro_carga,
-        )
-        progreso_carga.start_stage("Validación de archivos")
-        progreso_carga.finish_stage(12, "Validación de archivos completada")
+
+        progreso_carga = ProgresoCargaSimple(estado_carga)
+        progreso_carga.start_stage("Validando archivos")
 
     # Preparar una sola vez el archivo biométrico durante esta sesión.
     try:
@@ -1596,7 +1736,7 @@ def ejecutar_modo_todos():
         if progreso_carga:
             progreso_carga.fail("Error durante la lectura del Excel biométrico")
         st.error(f"No fue posible procesar el Excel biométrico: {exc}")
-        st.stop()
+        return
     if datos_biometricos["columnas_faltantes"]:
         if progreso_carga:
             progreso_carga.fail("El Excel biométrico no contiene todas las columnas requeridas")
@@ -1604,7 +1744,7 @@ def ejecutar_modo_todos():
             "No se pudieron detectar las siguientes columnas requeridas: "
             f"{', '.join(datos_biometricos['columnas_faltantes'])}"
         )
-        st.stop()
+        return
     df_todos = datos_biometricos["df"]
     metricas = datos_biometricos["metricas"]
     calidad = datos_biometricos["calidad"]
@@ -1613,7 +1753,7 @@ def ejecutar_modo_todos():
         if progreso_carga:
             progreso_carga.fail("No se encontraron registros biométricos válidos")
         st.warning("No se encontraron registros biométricos válidos tras el procesamiento.", icon=":material/warning:")
-        st.stop()
+        return
         
     # Procesar LPR si existe
     df_lpr_valido = None
@@ -1713,7 +1853,10 @@ def ejecutar_modo_todos():
     if st.session_state.get("_conjunto_filtros_todos") != conjunto_id:
         restablecer_widgets(widgets_predeterminados)
         st.session_state["filtros_aplicados_todos"] = filtros_predeterminados.copy()
+        st.session_state["_borrador_filtros_todos"] = widgets_predeterminados.copy()
         st.session_state["_conjunto_filtros_todos"] = conjunto_id
+    else:
+        _restaurar_borrador_filtros_todos()
 
     # SIDEBAR: los widgets son un borrador; solo el submit modifica resultados.
     with st.sidebar:
@@ -1743,42 +1886,43 @@ def ejecutar_modo_todos():
                 placeholder="Todas",
             )
             st.multiselect(
-                "Punto de acceso / cámara",
-                options=puntos_disponibles,
-                key="filt_punto_todos",
-                placeholder="Todos",
-            )
-            st.multiselect(
-                "Movimiento",
-                options=movimientos_disponibles,
-                key="filt_movimiento_todos",
-                placeholder="Todos",
-            )
-            st.multiselect(
-                "Mecanismo en vistas consolidadas",
+                "Mecanismo de identificación",
                 options=list(MECANISMOS_CONSOLIDADOS),
                 key="filt_mecanismo_todos",
                 placeholder="Todos",
                 help="Controla qué fuentes participan en los indicadores y gráficos consolidados. Los análisis propios de cada fuente permanecen disponibles.",
             )
-            st.multiselect(
-                "Resultado biométrico",
-                options=sorted(df_todos["Resultado"].dropna().unique()),
-                key="filt_res",
-                placeholder="Todos",
-            )
-            st.multiselect(
-                "Ingreso biométrico",
-                options=sorted(df_todos["Ingreso"].dropna().unique()),
-                key="filt_ingreso_todos",
-                placeholder="Todos",
-            )
-            st.multiselect(
-                "Tipo de usuario",
-                options=sorted(df_todos["Tipo_Usuario"].dropna().unique()),
-                key="filt_tipo_usu_todos",
-                placeholder="Todos",
-            )
+            with st.expander("Filtros avanzados", icon=":material/tune:"):
+                st.multiselect(
+                    "Punto de acceso / cámara",
+                    options=puntos_disponibles,
+                    key="filt_punto_todos",
+                    placeholder="Todos",
+                )
+                st.multiselect(
+                    "Movimiento",
+                    options=movimientos_disponibles,
+                    key="filt_movimiento_todos",
+                    placeholder="Todos",
+                )
+                st.multiselect(
+                    "Resultado biométrico",
+                    options=sorted(df_todos["Resultado"].dropna().unique()),
+                    key="filt_res",
+                    placeholder="Todos",
+                )
+                st.multiselect(
+                    "Ingreso biométrico",
+                    options=sorted(df_todos["Ingreso"].dropna().unique()),
+                    key="filt_ingreso_todos",
+                    placeholder="Todos",
+                )
+                st.multiselect(
+                    "Tipo de usuario",
+                    options=sorted(df_todos["Tipo_Usuario"].dropna().unique()),
+                    key="filt_tipo_usu_todos",
+                    placeholder="Todos",
+                )
             st.form_submit_button(
                 "Aplicar filtros",
                 icon=":material/filter_alt:",
@@ -1803,7 +1947,7 @@ def ejecutar_modo_todos():
         
     if df_f.empty and df_lpr_f.empty:
         st.warning("No hay registros biométricos ni LPR que coincidan con los filtros seleccionados.")
-        st.stop()
+        return
     if df_f.empty:
         st.info("No hay datos biométricos para este contexto; se muestran los resultados LPR disponibles.")
         
@@ -1870,11 +2014,11 @@ def ejecutar_modo_todos():
         mecanismos_contexto.append("Biométrico")
     if incluir_lpr:
         mecanismos_contexto.append("Reconocimiento LPR")
-    mostrar_contexto_resultados(
-        df_biometrico=df_f if incluir_biometrico else None,
-        df_lpr=df_lpr_f if incluir_lpr else None,
-        mecanismos=mecanismos_contexto,
-    )
+    # mostrar_contexto_resultados(
+    #     df_biometrico=df_f if incluir_biometrico else None,
+    #     df_lpr=df_lpr_f if incluir_lpr else None,
+    #     mecanismos=mecanismos_contexto,
+    # )
     
     # Render Dashboard
     
@@ -1888,7 +2032,7 @@ def ejecutar_modo_todos():
         ":material/query_stats: Frecuencia",
         ":material/monitoring: Analítica avanzada",
         ":material/verified: Calidad de datos",
-        ":material/directions_car: Análisis vehicular LPR"
+        ":material/directions_car: Análisis vehicular LPR",
     ])
     
     with tab_resumen:
@@ -2795,15 +2939,8 @@ def ejecutar_modo_todos():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def main():
-    st.sidebar.markdown("## :material/analytics: Análisis")
-    modo = st.sidebar.radio(
-        "Seleccione el tipo de análisis:",
-        # options=["Eventos Normales", "Eventos Anormales", "Todos los Eventos"],
-        options=["Todos los Eventos"],
-        index=0,
-        key="selector_modo_analisis"
-    )
-    st.sidebar.markdown("---")
+    # Se conserva el enrutador histórico sin mostrar un selector de una sola opción.
+    modo = "Todos los Eventos"
     
     if modo == "Eventos Normales":
         ejecutar_modo_exitoso()
@@ -2841,19 +2978,19 @@ def app_protegida():
     authenticator.login()
 
     if st.session_state["authentication_status"]:
-        with st.sidebar:
-            st.markdown(f"Bienvenido/a **{st.session_state['name']}**")
-            authenticator.logout('Cerrar sesión', 'main')
-            st.markdown("---")
-        
-        # Determine role from secrets
-        for username, user_info in config['credentials']['usernames'].items():
-            if username == st.session_state["username"]:
-                st.session_state["rol"] = user_info.get("role", "viewer")
-                break
+        # El nombre y el rol proceden exclusivamente de la sesión autenticada.
+        username = st.session_state.get("username")
+        user_info = config["credentials"]["usernames"].get(username, {})
+        st.session_state["rol"] = user_info.get("role", "viewer")
                 
-        # Run main app
+        # Identidad y navegación permanecen arriba; el panel agrega filtros y PDF.
+        mostrar_encabezado_sidebar()
+        mostrar_acceso_guia_sidebar()
+        _guardar_borrador_filtros_todos()
         main()
+        # Los controles menos frecuentes quedan después de filtros y exportación.
+        # mostrar_selector_tema_sidebar()
+        mostrar_perfil_sidebar(authenticator)
     elif st.session_state["authentication_status"] is False:
         st.error('Usuario o contraseña incorrectos')
     elif st.session_state["authentication_status"] is None:

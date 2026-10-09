@@ -22,6 +22,14 @@ data/
 *.jpeg
 *.svg
 
+# Recursos visuales requeridos por la guía de interpretación
+!resources/
+!resources/FERROVIARIA.png
+!resources/PEATONAL.png
+!resources/VEHICULAR.png
+!resources/GUIA_INTERPRETACION.png
+!resources/GUIA.png
+
 # Archivos temporales de sistema
 .DS_Store
 Thumbs.db
