@@ -5,9 +5,13 @@ import pandas as pd
 import streamlit as st
 from excel_processor import leer_excel_centralizado
 
-@st.cache_data(max_entries=1, ttl=1800, show_spinner="Cargando archivo de eventos integrales...")
-def cargar_excel_todos(archivo) -> pd.DataFrame:
-    """Carga el archivo subido en memoria."""
+@st.cache_data(max_entries=2, ttl=1800, show_spinner=False)
+def cargar_excel_todos(archivo, session_scope: str = "legacy") -> pd.DataFrame:
+    """Carga el archivo subido en memoria con una clave aislada por sesión.
+
+    ``session_scope`` forma parte deliberadamente de la clave de caché para que
+    un DataFrame institucional no sea reutilizado entre sesiones de usuarios.
+    """
     return leer_excel_centralizado(archivo)
 
 def detectar_columnas_todos(df: pd.DataFrame) -> dict:
@@ -25,7 +29,8 @@ def detectar_columnas_todos(df: pd.DataFrame) -> dict:
         "tipo_evento": None,
         "nombre": None,
         "apellido": None,
-        "departamento": None
+        "departamento": None,
+        "identificador_persona": None,
     }
     
     # 1. Tiempo (Hora, Fecha, Time, Date)
@@ -69,6 +74,12 @@ def detectar_columnas_todos(df: pd.DataFrame) -> dict:
         if "DEPARTAMENTO" in c or "AREA" in c or "ÁREA" in c:
             mapeo["departamento"] = cols[i]
             break
+
+    # 8. Identificador estable (el export real de HikCentral incluye Nº de tarjeta)
+    for i, c in enumerate(cols_upper):
+        if any(kw in c for kw in ["Nº DE TARJETA", "N° DE TARJETA", "NUMERO DE TARJETA", "NÚMERO DE TARJETA", "CARD NO", "CARD NUMBER"]):
+            mapeo["identificador_persona"] = cols[i]
+            break
             
     return mapeo
 
@@ -79,9 +90,11 @@ def reporte_calidad_todos(df: pd.DataFrame, mapeo: dict) -> dict:
         "columnas_faltantes": []
     }
     
+    opcionales = {"identificador_persona"}
     for clave, col in mapeo.items():
         if col is None:
-            calidad["columnas_faltantes"].append(clave)
+            if clave not in opcionales:
+                calidad["columnas_faltantes"].append(clave)
         else:
             # Reemplazar espacios o nulos para contar vacíos reales
             nulos = df[col].replace(r'^\s*$', pd.NA, regex=True).isnull().sum()

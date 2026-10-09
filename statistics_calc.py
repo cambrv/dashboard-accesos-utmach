@@ -16,6 +16,11 @@ from config import (
 )
 
 
+def _identidad(df: pd.DataFrame) -> str:
+    """Prioriza la tarjeta de HikCentral y conserva compatibilidad histórica."""
+    return "Persona_Analitica" if "Persona_Analitica" in df.columns else "Persona"
+
+
 # ─── 9.2 Flujo por punto de acceso ──────────────────────────────────────────
 def flujo_por_punto_acceso(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -23,11 +28,12 @@ def flujo_por_punto_acceso(df: pd.DataFrame) -> pd.DataFrame:
     ingreso, movimiento y usuarios únicos. Ordenado de mayor a menor.
     """
     total = len(df)
+    identidad = _identidad(df)
     grupo = df.groupby("Punto de acceso").agg(
-        Eventos=("Hora", "count"),
+        Eventos=("Punto de acceso", "size"),
         Ingreso=("Ingreso", "first"),
         Movimiento=("Movimiento", "first"),
-        Usuarios_Unicos=("Persona", lambda x: x[x != ""].nunique()),
+        Usuarios_Unicos=(identidad, lambda x: x.dropna()[x.dropna() != ""].nunique()),
     ).reset_index()
     grupo["Porcentaje"] = (grupo["Eventos"] / total * 100).round(DECIMALES_PORCENTAJE)
     grupo = grupo.sort_values("Eventos", ascending=False).reset_index(drop=True)
@@ -40,9 +46,10 @@ def flujo_por_punto_acceso(df: pd.DataFrame) -> pd.DataFrame:
 # ─── 9.3 Flujo por hora ─────────────────────────────────────────────────────
 def flujo_por_hora(df: pd.DataFrame) -> pd.DataFrame:
     """Eventos agrupados por hora del día (0-23)."""
+    identidad = _identidad(df)
     grupo = df.groupby("Hora_Dia").agg(
         Eventos=("Hora", "count"),
-        Usuarios_Unicos=("Persona", lambda x: x[x != ""].nunique()),
+        Usuarios_Unicos=(identidad, lambda x: x.dropna()[x.dropna() != ""].nunique()),
     ).reset_index()
     grupo = grupo.rename(columns={"Hora_Dia": "Hora"})
     # Asegurar todas las horas 0-23
@@ -170,9 +177,7 @@ def flujo_consolidado_hora(df: pd.DataFrame) -> pd.DataFrame:
 def entradas_vs_salidas_general(df: pd.DataFrame) -> pd.DataFrame:
     """Comparación general de entradas vs salidas."""
     total = len(df)
-    grupo = df.groupby("Movimiento").agg(
-        Eventos=("Hora", "count"),
-    ).reset_index()
+    grupo = df.groupby("Movimiento").size().reset_index(name="Eventos")
     grupo["Porcentaje"] = (grupo["Eventos"] / total * 100).round(DECIMALES_PORCENTAJE)
     return grupo.sort_values("Eventos", ascending=False)
 
@@ -188,9 +193,10 @@ def entradas_vs_salidas_por_ingreso(df: pd.DataFrame) -> pd.DataFrame:
 
 def entradas_vs_salidas_por_punto(df: pd.DataFrame) -> pd.DataFrame:
     """Entradas vs salidas por punto de acceso."""
+    identidad = _identidad(df)
     grupo = df.groupby(["Punto de acceso", "Movimiento"]).agg(
-        Eventos=("Hora", "count"),
-        Usuarios_Unicos=("Persona", lambda x: x[x != ""].nunique()),
+        Eventos=("Punto de acceso", "size"),
+        Usuarios_Unicos=(identidad, lambda x: x.dropna()[x.dropna() != ""].nunique()),
     ).reset_index()
     grupo["Punto de acceso"] = grupo["Punto de acceso"].apply(obtener_nombre_amigable)
     return grupo.sort_values(["Punto de acceso", "Eventos"], ascending=[True, False])
@@ -208,18 +214,17 @@ def flujo_consolidado(df: pd.DataFrame) -> pd.DataFrame:
     if "Tipo_Flujo_Consolidado" not in df.columns:
         return pd.DataFrame()
     total = len(df)
-    grupo = df.groupby("Tipo_Flujo_Consolidado").agg(
-        Eventos=("Hora", "count")
-    ).reset_index()
+    grupo = df.groupby("Tipo_Flujo_Consolidado").size().reset_index(name="Eventos")
     grupo["Porcentaje"] = (grupo["Eventos"] / total * 100).round(DECIMALES_PORCENTAJE)
     return grupo.sort_values("Eventos", ascending=False)
 
 def flujo_por_ingreso(df: pd.DataFrame) -> pd.DataFrame:
     """Flujo agrupado por ingreso (Categoria_Ingreso)."""
     total = len(df)
+    identidad = _identidad(df)
     grupo = df.groupby("Ingreso").agg(
-        Eventos=("Hora", "count"),
-        Usuarios_Unicos=("Persona", lambda x: x[x != ""].nunique()),
+        Eventos=("Ingreso", "size"),
+        Usuarios_Unicos=(identidad, lambda x: x.dropna()[x.dropna() != ""].nunique()),
     ).reset_index()
     grupo["Porcentaje"] = (grupo["Eventos"] / total * 100).round(DECIMALES_PORCENTAJE)
     return grupo.sort_values("Eventos", ascending=False)
@@ -229,9 +234,10 @@ def flujo_por_ingreso(df: pd.DataFrame) -> pd.DataFrame:
 def flujo_por_tipo_usuario(df: pd.DataFrame) -> pd.DataFrame:
     """Flujo agrupado por tipo de usuario."""
     total = len(df)
+    identidad = _identidad(df)
     grupo = df.groupby("Tipo_Usuario").agg(
-        Eventos=("Hora", "count"),
-        Usuarios_Unicos=("Persona", lambda x: x[x != ""].nunique()),
+        Eventos=("Tipo_Usuario", "size"),
+        Usuarios_Unicos=(identidad, lambda x: x.dropna()[x.dropna() != ""].nunique()),
     ).reset_index()
     grupo["Porcentaje"] = (grupo["Eventos"] / total * 100).round(DECIMALES_PORCENTAJE)
     return grupo.sort_values("Eventos", ascending=False)
@@ -249,9 +255,10 @@ def tipo_usuario_ingreso(df: pd.DataFrame) -> pd.DataFrame:
 # ─── 9.9 Flujo diario ───────────────────────────────────────────────────────
 def flujo_diario(df: pd.DataFrame) -> pd.DataFrame:
     """Eventos y usuarios únicos por fecha."""
+    identidad = _identidad(df)
     grupo = df.groupby("Fecha").agg(
-        Eventos=("Hora", "count"),
-        Usuarios_Unicos=("Persona", lambda x: x[x != ""].nunique()),
+        Eventos=("Fecha", "size"),
+        Usuarios_Unicos=(identidad, lambda x: x.dropna()[x.dropna() != ""].nunique()),
     ).reset_index()
     grupo = grupo.sort_values("Fecha")
     return grupo
@@ -302,9 +309,7 @@ def dias_pico(df: pd.DataFrame) -> dict:
 # ─── 9.10 Día de la semana ──────────────────────────────────────────────────
 def flujo_dia_semana(df: pd.DataFrame) -> pd.DataFrame:
     """Flujo por día de la semana con total y promedio."""
-    grupo = df.groupby("Dia_Semana").agg(
-        Eventos=("Hora", "count"),
-    ).reset_index()
+    grupo = df.groupby("Dia_Semana").size().reset_index(name="Eventos")
 
     # Contar cuántas veces aparece cada día de la semana en el dataset
     dias_por_semana = df.groupby("Dia_Semana")["Fecha"].nunique().reset_index(name="Ocurrencias")
@@ -356,9 +361,10 @@ def punto_tipo_usuario(df: pd.DataFrame) -> pd.DataFrame:
 # ─── 9.14 Punto de acceso + entrada/salida ──────────────────────────────────
 def punto_movimiento(df: pd.DataFrame) -> pd.DataFrame:
     """Para cada punto: tipo de movimiento, eventos, usuarios únicos."""
+    identidad = _identidad(df)
     grupo = df.groupby(["Punto de acceso", "Movimiento"]).agg(
-        Eventos=("Hora", "count"),
-        Usuarios_Unicos=("Persona", lambda x: x[x != ""].nunique()),
+        Eventos=("Punto de acceso", "size"),
+        Usuarios_Unicos=(identidad, lambda x: x.dropna()[x.dropna() != ""].nunique()),
     ).reset_index()
     grupo["Punto de acceso"] = grupo["Punto de acceso"].apply(obtener_nombre_amigable)
     return grupo.sort_values(["Punto de acceso", "Eventos"], ascending=[True, False])
@@ -373,7 +379,13 @@ def frecuencia_utilizacion(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
         - Top usuarios por frecuencia (sin nombres, solo estadísticas)
     """
     # Filtrar personas con identificador válido
-    personas = df[df["Persona"] != ""].groupby("Persona").size().reset_index(name="Eventos")
+    identidad = _identidad(df)
+    personas = (
+        df[df[identidad].notna() & df[identidad].astype(str).ne("")]
+        .groupby(identidad)
+        .size()
+        .reset_index(name="Eventos")
+    )
 
     # Distribución por rangos
     rangos_data = []
@@ -387,6 +399,16 @@ def frecuencia_utilizacion(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
     rangos_df = pd.DataFrame(rangos_data)
 
     # Estadísticas de frecuencia
+    if personas.empty:
+        valores = [0.0, 0.0, 0, 0, 0.0]
+    else:
+        valores = [
+            round(personas["Eventos"].mean(), 2),
+            round(personas["Eventos"].median(), 2),
+            int(personas["Eventos"].max()),
+            int(personas["Eventos"].min()),
+            round(personas["Eventos"].std(ddof=0), 2),
+        ]
     stats = pd.DataFrame({
         "Métrica": [
             "Promedio de eventos por usuario",
@@ -395,13 +417,7 @@ def frecuencia_utilizacion(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame
             "Mínimo de eventos por usuario",
             "Desviación estándar",
         ],
-        "Valor": [
-            round(personas["Eventos"].mean(), 2),
-            round(personas["Eventos"].median(), 2),
-            int(personas["Eventos"].max()),
-            int(personas["Eventos"].min()),
-            round(personas["Eventos"].std(), 2),
-        ],
+        "Valor": valores,
     })
 
     return rangos_df, stats

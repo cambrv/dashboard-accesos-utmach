@@ -20,11 +20,11 @@ PALETA_PRINCIPAL = [
 ]
 
 LAYOUT_TEMPLATE = dict(
-    font=dict(family="Plus Jakarta Sans, sans-serif", size=13),
+    font=dict(family="Inter, sans-serif", size=13),
     plot_bgcolor="rgba(0,0,0,0)",
     paper_bgcolor="rgba(0,0,0,0)",
     margin=dict(l=40, r=40, t=50, b=80),
-    hoverlabel=dict(font=dict(family="Plus Jakarta Sans, sans-serif", size=12)),
+    hoverlabel=dict(font=dict(family="Inter, sans-serif", size=12)),
     legend=dict(
         orientation="h",
         yanchor="top",
@@ -72,8 +72,8 @@ def grafico_flujo_punto_acceso(df_stats: pd.DataFrame) -> go.Figure:
             "<extra></extra>"
         ),
     ))
-    _aplicar_layout(fig, "Flujo por Punto de Acceso", height=max(400, len(df_plot) * 35))
-    fig.update_layout(xaxis_title="Eventos", yaxis_title="")
+    _aplicar_layout(fig, "Eventos registrados por punto de acceso", height=max(400, len(df_plot) * 35))
+    fig.update_layout(xaxis_title="Eventos registrados", yaxis_title="Punto de acceso")
     return fig
 
 
@@ -89,8 +89,8 @@ def grafico_flujo_hora(df_stats: pd.DataFrame) -> go.Figure:
         textposition="outside",
         hovertemplate="Horario: %{x}<br>Eventos: %{y:,}<extra></extra>",
     ))
-    _aplicar_layout(fig, "Distribución de Eventos por Hora del Día")
-    fig.update_layout(xaxis_title="Hora", yaxis_title="Eventos")
+    _aplicar_layout(fig, "Eventos acumulados por hora del día")
+    fig.update_layout(xaxis_title="Horario", yaxis_title="Eventos registrados")
     return fig
 
 
@@ -112,8 +112,8 @@ def grafico_heatmap_punto_hora(pivot: pd.DataFrame) -> go.Figure:
             "Eventos: %{z:,}<extra></extra>"
         ),
     ))
-    _aplicar_layout(fig, "Flujo de Registros Biométricos por Tipo de Ingreso y Hora", height=max(500, len(pivot) * 32))
-    fig.update_layout(xaxis_title="Hora del Día", yaxis_title="Tipo de Ingreso")
+    _aplicar_layout(fig, "Eventos registrados por tipo de ingreso y hora", height=max(500, len(pivot) * 32))
+    fig.update_layout(xaxis_title="Hora del día", yaxis_title="Tipo de ingreso")
     return fig
 
 def grafico_heatmap_consolidado_hora(pivot: pd.DataFrame) -> go.Figure:
@@ -129,7 +129,7 @@ def grafico_heatmap_consolidado_hora(pivot: pd.DataFrame) -> go.Figure:
             "Eventos: %{z:,}<extra></extra>"
         ),
     ))
-    _aplicar_layout(fig, "Flujo consolidado por hora: Peatonal vs. Vehicular", height=400)
+    _aplicar_layout(fig, "Eventos por hora: movilidad peatonal y vehicular", height=400)
     fig.update_layout(
         xaxis_title="Hora del Día", 
         yaxis_title="Tipo de Movilidad"
@@ -175,8 +175,8 @@ def grafico_entradas_salidas_hora(df_stats: pd.DataFrame) -> go.Figure:
             line=dict(color=COLORES_MOVIMIENTO.get(mov, "#9467bd"), width=2),
             hovertemplate="Horario: %{x}<br>Eventos: %{y:,}<extra></extra>",
         ))
-    _aplicar_layout(fig, "Entradas vs Salidas por Hora")
-    fig.update_layout(xaxis_title="Hora", yaxis_title="Eventos")
+    _aplicar_layout(fig, "Entradas y salidas registradas por hora")
+    fig.update_layout(xaxis_title="Horario", yaxis_title="Eventos registrados")
     return fig
 
 
@@ -192,8 +192,8 @@ def grafico_entradas_salidas_por_ingreso(df_stats: pd.DataFrame) -> go.Figure:
         color_discrete_map=COLORES_MOVIMIENTO,
     )
     fig.update_traces(texttemplate="%{text:,}", textposition="outside")
-    _aplicar_layout(fig, "Entradas vs Salidas por Ingreso")
-    fig.update_layout(xaxis_title="Ingreso", yaxis_title="Eventos")
+    _aplicar_layout(fig, "Entradas y salidas por categoría de ingreso")
+    fig.update_layout(xaxis_title="Categoría de ingreso", yaxis_title="Eventos registrados")
     return fig
 
 
@@ -211,8 +211,8 @@ def grafico_ingreso(df_stats: pd.DataFrame) -> go.Figure:
         textposition="outside",
         hovertemplate="Ingreso: %{x}<br>Eventos: %{y:,}<extra></extra>",
     ))
-    _aplicar_layout(fig, "Flujo por Categoría de Acceso")
-    fig.update_layout(xaxis_title="Categoría de Acceso", yaxis_title="Eventos")
+    _aplicar_layout(fig, "Eventos registrados por categoría de acceso")
+    fig.update_layout(xaxis_title="Categoría de acceso", yaxis_title="Eventos registrados")
     return fig
 
 def grafico_flujo_consolidado(df_stats: pd.DataFrame) -> go.Figure:
@@ -228,8 +228,8 @@ def grafico_flujo_consolidado(df_stats: pd.DataFrame) -> go.Figure:
         textposition="outside",
         hovertemplate="Flujo: %{x}<br>Eventos: %{y:,}<extra></extra>",
     ))
-    _aplicar_layout(fig, "Flujo consolidado: Peatonal vs. Vehicular")
-    fig.update_layout(xaxis_title="Tipo de Movilidad", yaxis_title="Eventos")
+    _aplicar_layout(fig, "Registros por tipo de movilidad")
+    fig.update_layout(xaxis_title="Tipo de movilidad", yaxis_title="Eventos registrados")
     
     # Agregar nota explicativa como anotación
     fig.add_annotation(
@@ -259,7 +259,7 @@ def grafico_tipo_usuario(df_stats: pd.DataFrame) -> go.Figure:
         textposition="outside",
         hovertemplate="Tipo: %{y}<br>Eventos: %{x:,}<extra></extra>",
     ))
-    _aplicar_layout(fig, "Flujo por Tipo de Usuario")
+    _aplicar_layout(fig, "Eventos registrados por tipo de usuario")
     fig.update_layout(xaxis_title="Eventos", yaxis_title="")
     return fig
 
@@ -308,7 +308,7 @@ def grafico_flujo_diario(df_stats: pd.DataFrame) -> go.Figure:
         ),
         secondary_y=True,
     )
-    _aplicar_layout(fig, "Flujo Diario: Eventos y Usuarios Únicos")
+    _aplicar_layout(fig, "Actividad diaria: eventos y usuarios identificados")
     fig.update_yaxes(title_text="Eventos", secondary_y=False)
     fig.update_yaxes(title_text="Usuarios Únicos", secondary_y=True)
     return fig
@@ -347,7 +347,7 @@ def grafico_dia_semana(df_stats: pd.DataFrame) -> go.Figure:
         textposition="outside",
         hovertemplate="Día: %{x}<br>Eventos: %{y:,}<extra></extra>",
     ))
-    _aplicar_layout(fig, "Flujo por Día de la Semana")
+    _aplicar_layout(fig, "Eventos registrados por día de la semana")
     fig.update_layout(xaxis_title="Día", yaxis_title="Eventos")
     return fig
 
@@ -385,7 +385,7 @@ def grafico_ingreso_hora(df_stats: pd.DataFrame) -> go.Figure:
             line=dict(color=COLORES_INGRESO.get(ingreso, "#7f7f7f"), width=2.5),
             hovertemplate=f"{ingreso}<br>Horario: %{{x}}<br>Eventos: %{{y:,}}<extra></extra>",
         ))
-    _aplicar_layout(fig, "Comparación de Flujo Horario por Ingreso")
+    _aplicar_layout(fig, "Actividad horaria por categoría de ingreso")
     fig.update_layout(xaxis_title="Hora", yaxis_title="Eventos")
     return fig
 
@@ -423,7 +423,7 @@ def grafico_frecuencia(df_rangos: pd.DataFrame) -> go.Figure:
         textposition="outside",
         hovertemplate="Rango: %{x}<br>Usuarios: %{y:,}<extra></extra>",
     ))
-    _aplicar_layout(fig, "Distribución de Frecuencia de Utilización")
+    _aplicar_layout(fig, "Usuarios agrupados por cantidad de eventos registrados")
     fig.update_layout(xaxis_title="Rango de Eventos", yaxis_title="Usuarios")
     return fig
 

@@ -88,7 +88,7 @@ DECIMALES_PORCENTAJE = 2
 
 # ─── Configuración de la app ────────────────────────────────────────────────
 APP_TITULO = "Sistema de Reportes — Flujo de Ingresos Peatonales"
-APP_ICON = "📊"
+APP_ICON = ":material/analytics:"
 APP_LAYOUT = "wide"
 
 # ─── Clasificación de Resultado (Modo Todos los Eventos) ─────────────────────

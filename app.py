@@ -5,8 +5,7 @@ Ejecutar con: streamlit run app.py
 
 Arquitectura modular:
 - config.py:          Configuración central
-- data_loader.py:     Carga y validación de datos
-- data_processing.py: Limpieza y transformación
+- deprecated/eventos_normales/: implementación histórica fuera del arranque operativo
 - statistics_calc.py: Cálculo de estadísticas
 - visualizations.py:  Gráficos interactivos con Plotly
 - export.py:          Exportación de reportes
@@ -16,11 +15,11 @@ import streamlit as st
 import pandas as pd
 import os
 import glob
+import hashlib
+import uuid
 from datetime import datetime
 
 from config import APP_TITULO, APP_ICON, APP_LAYOUT
-from data_loader import cargar_excel, validar_columnas, generar_reporte_calidad
-from data_processing import procesar_datos
 from statistics_calc import (
     flujo_por_punto_acceso,
     flujo_por_hora,
@@ -65,22 +64,79 @@ from visualizations import (
     grafico_flujo_consolidado,
     grafico_heatmap_consolidado_hora,
 )
-from export import exportar_dataset_filtrado, exportar_reporte_completo
 from pdf_report import exportar_reporte_pdf, construir_graficos_reporte
-from styles import aplicar_estilos
+from styles import aplicar_estilos, adaptar_figura_plotly, obtener_tema_actual
 
 # ─── Monkey Patch para Plotly ───────────────────────────────────────────────
 # Streamlit >= 1.16 sobrescribe por defecto el layout de Plotly con su propio tema.
-# Para que los gráficos hereden "Plus Jakarta Sans" desde el layout de visualizations.py,
+# Para que los gráficos hereden "Inter" desde el layout de visualizations.py,
 # forzamos globalmente que theme=None.
 if not hasattr(st, "_original_plotly_chart"):
     st._original_plotly_chart = st.plotly_chart
 
 def _patched_plotly_chart(*args, **kwargs):
+    if args:
+        adaptar_figura_plotly(args[0], obtener_tema_actual())
+    elif "figure_or_data" in kwargs:
+        adaptar_figura_plotly(kwargs["figure_or_data"], obtener_tema_actual())
     kwargs["theme"] = None
     return st._original_plotly_chart(*args, **kwargs)
 
 st.plotly_chart = _patched_plotly_chart
+
+# Etiquetas legibles aplicadas únicamente a la presentación de tablas.
+ETIQUETAS_COLUMNAS = {
+    "Punto_Acceso": "Punto de acceso",
+    "Punto de acceso": "Punto de acceso",
+    "Camara": "Cámara de acceso",
+    "Direccion": "Sentido de circulación",
+    "Sitio": "Ubicación",
+    "Ubicacion": "Ubicación",
+    "Ubicacion_Ingreso": "Ubicación",
+    "Hora_Dia": "Hora del día",
+    "Dia_Semana": "Día de la semana",
+    "Usuarios_Unicos": "Usuarios identificados",
+    "Registros": "Eventos registrados",
+    "Eventos": "Eventos registrados",
+    "Mecanismo": "Mecanismo de identificación",
+    "Movimiento": "Sentido de circulación",
+    "Fecha_mayor_actividad": "Fecha de mayor actividad",
+    "Hora_pico": "Hora de mayor actividad",
+    "Hora_Pico": "Horario con mayor actividad",
+    "Eventos_hora_pico": "Eventos en la hora de mayor actividad",
+    "Promedio_hora_pico_min": "Eventos por minuto durante la hora de mayor actividad",
+    "Minuto_maximo": "Minuto de mayor actividad",
+    "Maximo_observado_minuto": "Mayor número de eventos en un minuto",
+    "Promedio_diario_sentido": "Promedio diario de eventos",
+    "Dias_considerados": "Días con datos",
+    "Promedio_registros_minuto": "Promedio acumulado por minuto",
+    "Promedio_por_dia": "Promedio diario de la franja",
+    "Cantidad_Fallos": "Fallos de reconocimiento",
+    "Porcentaje_Total": "Porcentaje de fallos del período",
+    "Puntos_Acceso": "Puntos de acceso relacionados",
+    "Device Name": "Dispositivo",
+    "Valores Nulos": "Registros sin información",
+    "Matricula": "Matrícula",
+}
+
+if not hasattr(st, "_original_dataframe"):
+    st._original_dataframe = st.dataframe
+
+
+def _patched_dataframe(*args, **kwargs):
+    data = args[0] if args else kwargs.get("data")
+    base = getattr(data, "data", data)
+    columnas = getattr(base, "columns", [])
+    configuracion = dict(kwargs.get("column_config") or {})
+    for columna in columnas:
+        if columna in ETIQUETAS_COLUMNAS and columna not in configuracion:
+            configuracion[columna] = ETIQUETAS_COLUMNAS[columna]
+    if configuracion:
+        kwargs["column_config"] = configuracion
+    return st._original_dataframe(*args, **kwargs)
+
+
+st.dataframe = _patched_dataframe
 
 # ─── Configuración de página ────────────────────────────────────────────────
 st.set_page_config(
@@ -89,13 +145,6 @@ st.set_page_config(
     initial_sidebar_state="expanded",
     layout="wide"
 )
-
-# Importaciones para el módulo de eventos fallidos
-from failed_data_loader import cargar_excel_fallidos, detectar_columnas_fallidos, reporte_calidad_fallidos
-from failed_data_processing import procesar_datos_fallidos
-import failed_statistics_calc as fs
-import failed_visualizations as fv
-from failed_pdf_report import exportar_reporte_fallidos_pdf
 
 # Importaciones para el módulo de Todos los Eventos
 from all_events_data_loader import cargar_excel_todos, detectar_columnas_todos, reporte_calidad_todos
@@ -109,8 +158,149 @@ from lpr_data_loader import cargar_excel_lpr, detectar_columnas_lpr, reporte_cal
 from lpr_data_processing import procesar_datos_lpr, deduplicar_eventos_vehiculares
 import lpr_statistics_calc as lprs
 import lpr_visualizations as lprv
+from dashboard_filters import (
+    MECANISMO_BIOMETRICO,
+    MECANISMO_LPR,
+    MECANISMOS_CONSOLIDADOS,
+    aplicar_filtros_integrales,
+    mecanismo_incluido,
+)
+from load_progress import LiveElapsedTimer, LoadProgress
 
-aplicar_estilos()
+
+def configurar_tema_interfaz():
+    """Renderiza el selector de tema sin afectar los datos cargados."""
+    st.session_state.setdefault("tema_app", "Claro")
+    with st.sidebar:
+        st.radio(
+            ":material/palette: Apariencia",
+            options=["Claro", "Oscuro"],
+            horizontal=True,
+            key="tema_app",
+        )
+    aplicar_estilos(obtener_tema_actual())
+
+
+def restablecer_widgets(valores: dict):
+    """Restaura valores de widgets antes de que Streamlit los renderice."""
+    for key, value in valores.items():
+        st.session_state[key] = value
+
+
+def _session_scope() -> str:
+    """Identificador efímero usado para aislar cachés con datos personales."""
+    return st.session_state.setdefault("_cache_scope", uuid.uuid4().hex)
+
+
+def _archivo_id(archivo) -> str:
+    """Huella de contenido; no depende del nombre ni de una ruta local."""
+    return hashlib.sha256(archivo.getvalue()).hexdigest()
+
+
+def _preparar_biometrico_sesion(archivo, archivo_id=None, progreso=None):
+    """Lee, valida y clasifica una sola vez por archivo y sesión."""
+    archivo_id = archivo_id or _archivo_id(archivo)
+    cache = st.session_state.get("_biometrico_preparado")
+    if cache and cache["archivo_id"] == archivo_id:
+        if progreso:
+            progreso.start_stage("Recuperando el Excel biométrico preparado")
+            progreso.finish_stage(50, "Excel biométrico recuperado desde la sesión")
+        return cache
+
+    if progreso:
+        progreso.start_stage(
+            "Lectura del Excel biométrico en curso",
+            indeterminate=True,
+        )
+    df_crudo = cargar_excel_todos(archivo, _session_scope())
+    if progreso:
+        progreso.finish_stage(25, "Lectura del Excel biométrico completada")
+        progreso.start_stage("Normalización y depuración biométrica en curso")
+    mapeo = detectar_columnas_todos(df_crudo)
+    calidad = reporte_calidad_todos(df_crudo, mapeo)
+    if calidad["columnas_faltantes"]:
+        return {
+            "archivo_id": archivo_id,
+            "columnas_faltantes": calidad["columnas_faltantes"],
+        }
+
+    df, metricas = procesar_datos_todos(df_crudo, mapeo)
+    df = df[df["Tipo_Usuario"] != "25 DE JUNIO"].copy()
+    if progreso:
+        progreso.finish_stage(
+            50,
+            "Normalización, depuración y clasificación biométrica completadas",
+        )
+    cache = {
+        "archivo_id": archivo_id,
+        "columnas_faltantes": [],
+        "df": df,
+        "metricas": metricas,
+        "calidad": calidad,
+    }
+    st.session_state["_biometrico_preparado"] = cache
+    return cache
+
+
+def _preparar_lpr_sesion(archivo, archivo_id=None, progreso=None):
+    """Lee, normaliza y deduplica LPR una sola vez por archivo y sesión."""
+    archivo_id = archivo_id or _archivo_id(archivo)
+    cache = st.session_state.get("_lpr_preparado")
+    if cache and cache["archivo_id"] == archivo_id:
+        if progreso:
+            progreso.start_stage("Recuperando el Excel LPR preparado")
+            progreso.finish_stage(75, "Excel LPR recuperado desde la sesión")
+        return cache
+
+    if progreso:
+        progreso.start_stage("Lectura del Excel LPR en curso", indeterminate=True)
+    df_crudo = cargar_excel_lpr(archivo, _session_scope())
+    if progreso:
+        progreso.finish_stage(62, "Lectura del Excel LPR completada")
+        progreso.start_stage("Normalización y deduplicación LPR en curso")
+    mapeo = detectar_columnas_lpr(df_crudo)
+    calidad = reporte_calidad_lpr(df_crudo, mapeo)
+    if calidad["columnas_faltantes"]:
+        return {
+            "archivo_id": archivo_id,
+            "columnas_faltantes": calidad["columnas_faltantes"],
+        }
+
+    df_procesado, metricas = procesar_datos_lpr(df_crudo, mapeo)
+    df_valido, df_duplicados = deduplicar_eventos_vehiculares(df_procesado)
+    if progreso:
+        progreso.finish_stage(75, "Normalización, clasificación y deduplicación LPR completadas")
+    cache = {
+        "archivo_id": archivo_id,
+        "columnas_faltantes": [],
+        "df_crudo": df_crudo,
+        "df_valido": df_valido,
+        "df_duplicados": df_duplicados,
+        "metricas": metricas,
+        "calidad": calidad,
+    }
+    st.session_state["_lpr_preparado"] = cache
+    return cache
+
+
+def _aplicar_filtros_todos_desde_widgets():
+    """Copia el borrador del formulario al estado efectivamente aplicado."""
+    st.session_state["filtros_aplicados_todos"] = {
+        "rango_fechas": tuple(st.session_state.get("filt_fechas_todos", ())),
+        "resultados": list(st.session_state.get("filt_res", [])),
+        "ingresos": list(st.session_state.get("filt_ingreso_todos", [])),
+        "tipos_usuario": list(st.session_state.get("filt_tipo_usu_todos", [])),
+        "ubicaciones": list(st.session_state.get("filt_ubicacion_todos", [])),
+        "mecanismos": list(st.session_state.get("filt_mecanismo_todos", [])),
+        "puntos_acceso": list(st.session_state.get("filt_punto_todos", [])),
+        "movimientos": list(st.session_state.get("filt_movimiento_todos", [])),
+    }
+
+
+def _restablecer_filtros_todos(valores_widgets: dict, filtros_aplicados: dict):
+    """Limpia a la vez etiquetas visibles y resultados aplicados."""
+    restablecer_widgets(valores_widgets)
+    st.session_state["filtros_aplicados_todos"] = filtros_aplicados.copy()
 
 def formato_numero(n) -> str:
     """Formatea un número con separador de miles."""
@@ -122,17 +312,221 @@ def formato_numero(n) -> str:
 def mostrar_metrica(label: str, value, icon: str = ""):
     """Renderiza una tarjeta de métrica."""
     display = formato_numero(value) if isinstance(value, (int, float)) else str(value)
+    icon_html = (
+        f'<span class="material-symbols-rounded metric-icon">{icon}</span>'
+        if icon else ""
+    )
     st.markdown(f"""
     <div class="metric-card">
-        <div class="value">{icon} {display}</div>
+        <div class="value">{icon_html} {display}</div>
         <div class="label">{label}</div>
     </div>
     """, unsafe_allow_html=True)
 
 
-def mostrar_seccion(titulo: str):
+TITULOS_SECCIONES = {
+    "Flujo por Punto de Acceso": "Registros por punto de acceso",
+    "Flujo por Hora del Día": "Actividad registrada por hora del día",
+    "Flujo por Punto de Acceso y Hora": "Actividad por punto de acceso y hora",
+    "Flujo Diario": "Actividad diaria registrada",
+    "Flujo por Día de la Semana": "Actividad por día de la semana",
+    "Detalle Diario": "Detalle diario de registros y usuarios",
+    "Entradas vs Salidas": "Comparación de entradas y salidas registradas",
+    "Entradas vs Salidas por Hora": "Entradas y salidas registradas por hora",
+    "Entradas vs Salidas por Ingreso": "Entradas y salidas por tipo de ingreso",
+    "Entradas/Salidas por Punto de Acceso": "Entradas y salidas por punto de acceso",
+    "Flujo por Tipo de Usuario": "Registros por tipo de usuario",
+    "Tipo de Usuario por Ingreso": "Tipos de usuario por categoría de ingreso",
+    "Tipo de Usuario por Punto de Acceso": "Tipos de usuario por punto de acceso",
+    "Flujo por Ingreso": "Registros por categoría de ingreso",
+    "Comparación de Flujo Horario por Ingreso": "Actividad horaria por categoría de ingreso",
+    "Frecuencia de Utilización del Sistema": "Frecuencia de registros por usuario",
+    "Frecuencia": "Frecuencia de registros por usuario",
+    "Valores Nulos por Columna": "Campos sin información",
+    "Puntos de Acceso Encontrados": "Puntos de acceso identificados en el archivo",
+    "1. Comportamiento Temporal": "1. Evolución temporal de eventos anormales",
+    "2. Análisis Geográfico": "2. Eventos anormales por ingreso y punto de acceso",
+    "Resumen General de Movilidad": "Resumen institucional de movilidad registrada",
+    "Estadísticas vehiculares consolidadas": "Eventos vehiculares por mecanismo de identificación",
+    "Flujo General Consolidado": "Distribución general de registros por tipo de movilidad",
+    "Distribución Detallada por Categoría de Acceso": "Distribución de registros por categoría de acceso",
+    "Flujo por Punto de Acceso Físico": "Registros por punto de acceso físico",
+    "Comportamiento Horario Consolidado": "Actividad horaria por tipo de movilidad",
+    "Comportamiento Diario": "Evolución diaria de registros",
+    "Comportamiento Detallado por Hora": "Actividad detallada por hora del día",
+    "Usuarios por Tipo y Punto de Acceso": "Usuarios registrados por tipo y punto de acceso",
+    "Análisis de Tasas de Fallo y Éxito": "Resultados de autenticación biométrica",
+    "1. Distribución de Resultados": "1. Autenticaciones exitosas, fallidas y denegadas",
+    "2. Comportamiento por Ingreso": "2. Resultados biométricos por tipo de ingreso",
+    "3. Evolución de Tasas": "3. Evolución temporal de resultados biométricos",
+    "4. Hardware": "4. Resultados por punto de acceso y dispositivo",
+    "Analítica Avanzada e Inteligencia": "Hallazgos estadísticos del período",
+    "Análisis Vehicular LPR": "Registros vehiculares identificados mediante LPR",
+    "Flujo Vehicular": "Actividad vehicular por carril",
+    "Períodos de mayor flujo": "Horarios acumulados con mayor actividad LPR",
+    "Flujo por acceso": "Actividad LPR por punto de acceso",
+    "Placas con mayor frecuencia": "Matrículas con más eventos LPR registrados",
+}
+
+
+DESCRIPCIONES_SECCIONES = {
+    "Flujo por Punto de Acceso": "Muestra cuántos eventos se registraron en cada punto de acceso durante el período aplicado.",
+    "Flujo por Hora del Día": "Compara la cantidad acumulada de eventos para cada hora del día dentro del período aplicado.",
+    "Flujo por Punto de Acceso y Hora": "Permite identificar en qué horas se concentra la actividad de cada punto de acceso.",
+    "Flujo Diario": "Presenta la evolución de eventos y usuarios identificados en cada fecha con datos.",
+    "Flujo por Día de la Semana": "Resume los eventos registrados por día de la semana en el contexto seleccionado.",
+    "Detalle Diario": "Complementa el gráfico con los conteos diarios de eventos y usuarios identificados.",
+    "Entradas vs Salidas": "Compara los eventos clasificados como entrada, salida u otro movimiento.",
+    "Entradas vs Salidas por Hora": "Muestra cómo se distribuyen las entradas y salidas a lo largo del día.",
+    "Entradas vs Salidas por Ingreso": "Desglosa los movimientos registrados para cada categoría de ingreso.",
+    "Entradas/Salidas por Punto de Acceso": "Detalla entradas, salidas y usuarios identificados en cada punto físico.",
+    "Flujo por Tipo de Usuario": "Compara los eventos asociados a cada tipo de usuario informado por el sistema.",
+    "Tipo de Usuario por Ingreso": "Relaciona los tipos de usuario con las categorías de ingreso utilizadas.",
+    "Tipo de Usuario por Punto de Acceso": "Muestra qué tipos de usuario fueron registrados en cada punto de acceso.",
+    "Flujo por Ingreso": "Compara el volumen de eventos de las categorías institucionales de acceso.",
+    "Comparación de Flujo Horario por Ingreso": "Compara las horas de mayor actividad entre categorías de ingreso.",
+    "Mapa de Calor: Día de la Semana × Hora": "La intensidad del color representa la cantidad de eventos para cada combinación de día y hora.",
+    "Mapa de Calor: Punto de Acceso × Hora": "La intensidad del color representa la actividad registrada por punto de acceso y hora.",
+    "Frecuencia de Utilización del Sistema": "Agrupa a los usuarios según la cantidad de eventos asociados durante el período.",
+    "Frecuencia": "Agrupa a los usuarios según cuántos eventos tienen registrados en el contexto aplicado.",
+    "Conclusiones y Hallazgos Automáticos": "Sintetiza patrones calculados a partir de los registros seleccionados, sin atribuir causas no demostradas.",
+    "Días Pico Detallados": "Identifica las fechas con mayor y menor cantidad de eventos dentro del período.",
+    "Validación y Calidad de Datos": "Informa la integridad del archivo y los registros que no pudieron utilizarse completamente.",
+    "Valores Nulos por Columna": "Indica cuántos registros carecen de información en cada campo de origen.",
+    "Puntos de Acceso Encontrados": "Lista los puntos detectados, su clasificación y el volumen de eventos asociado.",
+    "1. Comportamiento Temporal": "Muestra cómo evolucionaron los eventos anormales por fecha y hora.",
+    "2. Análisis Geográfico": "Compara los eventos anormales entre ingresos y puntos de acceso.",
+    "3. Conclusiones Principales": "Resume los hallazgos calculados para los eventos anormales seleccionados.",
+    "Resumen General de Movilidad": "Resume los registros biométricos peatonales, biométricos vehiculares y LPR incluidos por los filtros aplicados.",
+    "Estadísticas vehiculares consolidadas": "Compara eventos de identificación biométrica VEH y LPR; la suma no representa vehículos físicos únicos.",
+    "Flujo General Consolidado": "Compara los registros por tipo de movilidad y mecanismo incluidos en el contexto aplicado.",
+    "Distribución Detallada por Categoría de Acceso": "Muestra la participación de cada una de las categorías institucionales de acceso.",
+    "Flujo por Punto de Acceso Físico": "Ordena los puntos de acceso según la cantidad de eventos registrados.",
+    "Comportamiento Horario Consolidado": "Compara la actividad peatonal y vehicular para cada hora del día.",
+    "Comportamiento Diario": "Muestra la cantidad de registros por fecha dentro del período aplicado.",
+    "Comportamiento Detallado por Hora": "Presenta la distribución horaria general y por categoría de ingreso.",
+    "Mapa de Calor: Puntos de Acceso vs Hora": "Relaciona puntos de acceso y horas; los colores más intensos indican más eventos.",
+    "Usuarios por Tipo y Punto de Acceso": "Compara los registros de usuarios por clasificación y lugar de acceso.",
+    "Análisis de Tasas de Fallo y Éxito": "Distingue autenticaciones exitosas, fallos de reconocimiento, accesos denegados y otros resultados.",
+    "1. Distribución de Resultados": "Muestra el número y porcentaje de eventos para cada resultado biométrico.",
+    "2. Comportamiento por Ingreso": "Compara resultados biométricos entre las categorías de ingreso.",
+    "3. Evolución de Tasas": "Muestra cómo variaron los resultados por fecha y hora del día.",
+    "4. Hardware": "Compara los resultados por punto de acceso y por dispositivo registrado en HikCentral.",
+    "Analítica Avanzada e Inteligencia": "Presenta comparaciones, concentraciones y casos que requieren revisión institucional.",
+    "Calidad de Datos": "Resume la integridad del archivo biométrico utilizado en el análisis.",
+    "Análisis Vehicular LPR": "Resume eventos LPR depurados, matrículas identificadas, sentidos y ubicaciones.",
+    "Flujo Vehicular": "Muestra la actividad LPR por carril, minuto real y hora calendario dentro del período aplicado.",
+    "Períodos de mayor flujo": "Ordena las franjas horarias por eventos LPR acumulados en todos los días analizados.",
+    "Entradas vehiculares registradas por día": "Muestra los eventos LPR de entrada para cada fecha con datos.",
+    "Actividad vehicular total en el tiempo": "Presenta la evolución diaria y la concentración por día de la semana y hora.",
+    "Flujo por acceso": "Resume la franja acumulada de mayor actividad para cada punto de acceso LPR.",
+    "Entradas y salidas LPR por ubicación": "Compara los eventos LPR de entrada y salida en 25 de Junio y Ferroviaria.",
+    "Placas con mayor frecuencia": "Muestra las matrículas con más eventos LPR; cada evento es un registro, no un vehículo físico nuevo.",
+    "Conclusiones Principales (Registros Biométricos)": "Resume los hallazgos calculados a partir de los eventos biométricos incluidos en los filtros aplicados.",
+}
+
+
+def mostrar_seccion(titulo: str, icono: str = "analytics"):
     """Renderiza un encabezado de sección."""
-    st.markdown(f'<div class="section-header">{titulo}</div>', unsafe_allow_html=True)
+    titulo_visible = TITULOS_SECCIONES.get(titulo, titulo)
+    st.markdown(
+        f'<div class="section-header"><span class="material-symbols-rounded section-icon">{icono}</span>{titulo_visible}</div>',
+        unsafe_allow_html=True,
+    )
+    descripcion = DESCRIPCIONES_SECCIONES.get(titulo)
+    if descripcion:
+        st.caption(descripcion)
+
+
+def mostrar_contexto_resultados(df_biometrico=None, df_lpr=None, mecanismos=None):
+    """Muestra una sola vez el contexto que realmente participa en los resultados."""
+    partes = [df for df in [df_biometrico, df_lpr] if df is not None and not df.empty]
+    fechas = []
+    ubicaciones = set()
+    for parte in partes:
+        if "Fecha" in parte.columns:
+            fechas.extend(pd.to_datetime(parte["Fecha"], errors="coerce").dropna().tolist())
+        if "Ubicacion_Ingreso" in parte.columns:
+            ubicaciones.update(
+                parte["Ubicacion_Ingreso"].dropna().astype(str).loc[
+                    lambda s: s.isin(["25 de Junio", "Ferroviaria"])
+                ]
+            )
+    periodo = "Sin fechas disponibles"
+    if fechas:
+        periodo = f"{min(fechas):%d/%m/%Y} al {max(fechas):%d/%m/%Y}"
+    ubicacion = ", ".join(sorted(ubicaciones)) if ubicaciones else "Todas las disponibles"
+    mecanismo = ", ".join(mecanismos) if mecanismos else "Registros biométricos"
+    st.info(
+        f"Contexto aplicado: período {periodo} | Ubicación: {ubicacion} | "
+        f"Mecanismo: {mecanismo}. Los valores corresponden a los filtros ya aplicados.",
+        icon=":material/filter_alt:",
+    )
+
+
+def _calcular_analitica_integral(df_f, df_todos, df_consolidado_total, filtros_aplicados):
+    """Calcula una vez las agregaciones que comparten las pestañas integrales."""
+    tasas = ats.calcular_tasas_generales(df_f)
+    top_usuarios_fallos = ats.calcular_top_usuarios_fallos(df_f)
+    anomalias_avanzadas = ats.detectar_anomalias_avanzadas(df_f)
+
+    comparacion_periodos = {}
+    rango_fechas = filtros_aplicados.get("rango_fechas") or ()
+    if len(rango_fechas) == 2 and (rango_fechas[1] - rango_fechas[0]).days > 0:
+        dias_diferencia = (rango_fechas[1] - rango_fechas[0]).days + 1
+        fecha_fin_anterior = rango_fechas[0] - pd.Timedelta(days=1)
+        fecha_inicio_anterior = fecha_fin_anterior - pd.Timedelta(days=dias_diferencia - 1)
+        filtros_anteriores = dict(filtros_aplicados)
+        filtros_anteriores["rango_fechas"] = (fecha_inicio_anterior, fecha_fin_anterior)
+        df_anterior, _ = aplicar_filtros_integrales(df_todos, None, filtros_anteriores)
+        if not df_anterior.empty:
+            comparacion_periodos = ats.comparar_periodos(df_f, df_anterior)
+
+    stats_nuevas = {
+        "resultados": ats.stats_resultados(df_f),
+        "cruce_ingreso": ats.stats_cruce_ingreso_resultado(df_f),
+        "cruce_hora": ats.stats_cruce_hora_resultado(df_f),
+        "evolucion_diaria": ats.stats_evolucion_resultado(df_f),
+        "dia_semana": ats.stats_dia_semana_resultado(df_f),
+        "cruce_usuario": ats.stats_tipo_usuario_resultado(df_f),
+        "cruce_punto": ats.stats_punto_acceso_resultado(df_f),
+        "cruce_device": ats.stats_device_resultado(df_f),
+        "heatmap": ats.stats_heatmap_dia_hora(df_f),
+        "anomalias": ats.stats_comportamiento_anormal(df_f),
+        "top_fallos": top_usuarios_fallos,
+        "anomalias_avanzadas": anomalias_avanzadas,
+        "comparacion_periodos": comparacion_periodos,
+    }
+    conclusiones = ats.generar_conclusiones_todos(df_f, tasas, stats_nuevas)
+    stats_base = {
+        "flujo_punto_acceso": flujo_por_punto_acceso(df_consolidado_total),
+        "flujo_hora": flujo_por_hora(df_consolidado_total),
+        "heatmap_punto_hora": flujo_punto_hora(df_consolidado_total),
+        "heatmap_consolidado_hora": flujo_consolidado_hora(df_consolidado_total),
+        "entradas_salidas": entradas_vs_salidas_general(df_consolidado_total),
+        "entradas_salidas_hora": entradas_vs_salidas_por_hora(df_consolidado_total),
+        "entradas_salidas_ingreso": entradas_vs_salidas_por_ingreso(df_consolidado_total),
+        "flujo_ingreso": flujo_por_ingreso(df_consolidado_total),
+        "flujo_consolidado": flujo_consolidado(df_consolidado_total),
+        "tipo_usuario": flujo_por_tipo_usuario(df_consolidado_total),
+        "tipo_usuario_ingreso": tipo_usuario_ingreso(df_consolidado_total),
+        "flujo_diario": flujo_diario(df_consolidado_total),
+        "flujo_diario_ingreso": flujo_diario_por_ingreso(df_consolidado_total),
+        "dia_semana": flujo_dia_semana(df_consolidado_total),
+        "heatmap_dia_hora": heatmap_dia_hora(df_consolidado_total),
+        "ingreso_hora": ingreso_hora(df_consolidado_total),
+        "punto_tipo_usuario": punto_tipo_usuario(df_consolidado_total),
+        "frecuencia": frecuencia_utilizacion(df_consolidado_total)[0],
+    }
+    return tasas, stats_nuevas, conclusiones, stats_base
+
+
+def _clave_filtros(filtros: dict) -> tuple:
+    """Convierte el estado aplicado en una clave estable y comparable."""
+    return tuple(
+        (nombre, tuple(valor) if isinstance(valor, (list, tuple)) else valor)
+        for nombre, valor in sorted(filtros.items())
+    )
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -141,10 +535,16 @@ def mostrar_seccion(titulo: str):
 # ═════════════════════════════════════════════════════════════════════════════
 
 def ejecutar_modo_exitoso():
-    st.markdown("<h1><i class='bi bi-check-circle-fill' style='color:#55A878;'></i> Análisis de Eventos Normales</h1>", unsafe_allow_html=True)
+    # Compatibilidad histórica: carga diferida para que deprecated no forme
+    # parte del arranque ni de la sección operativa "Todos los Eventos".
+    from deprecated.eventos_normales.data_loader import cargar_excel, validar_columnas, generar_reporte_calidad
+    from deprecated.eventos_normales.data_processing import procesar_datos
+    from deprecated.eventos_normales.export import exportar_dataset_filtrado, exportar_reporte_completo
+
+    st.title(":material/check_circle: Análisis de eventos normales")
     st.markdown("Cargue un archivo Excel que contenga los registros de eventos normales para su análisis independiente.")
 
-    archivo_subido = st.file_uploader("Cargar Excel de Eventos Normales", type=["xlsx"])
+    archivo_subido = st.file_uploader(":material/upload_file: Cargar Excel de eventos normales", type=["xlsx"])
 
     if not archivo_subido:
         st.info("Esperando archivo. Por favor, suba un archivo Excel (.xlsx) para continuar.")
@@ -170,22 +570,32 @@ def ejecutar_modo_exitoso():
     
     # (Eliminado el filtro duro de Tipo_Usuario para incluir SIN CLASIFICAR)
 
+    fecha_min = df["Fecha"].min()
+    fecha_max = df["Fecha"].max()
+
     # ─── SIDEBAR: Filtros ────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown("## <i class='bi bi-funnel'></i> Filtros", unsafe_allow_html=True)
+        st.markdown("## :material/filter_list: Filtros")
 
-        # Botón restablecer
-        if st.button(" Restablecer filtros", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                if key.startswith("filtro_"):
-                    del st.session_state[key]
-            st.rerun()
+        st.button(
+            " Restablecer filtros",
+            icon=":material/restart_alt:",
+            use_container_width=True,
+            on_click=restablecer_widgets,
+            args=({
+                "filtro_fecha_inicio": fecha_min,
+                "filtro_fecha_fin": fecha_max,
+                "filtro_ingreso": [],
+                "filtro_tipo_usuario": [],
+                "filtro_movimiento": [],
+                "filtro_punto_acceso": [],
+                "filtro_hora": (0, 23),
+            },),
+        )
 
         st.markdown("---")
 
         # Rango de fechas
-        fecha_min = df["Fecha"].min()
-        fecha_max = df["Fecha"].max()
         fecha_inicio = st.date_input(
             " Fecha inicio",
             value=fecha_min,
@@ -206,7 +616,7 @@ def ejecutar_modo_exitoso():
         # Ingreso
         ingreso_opciones = sorted(df["Ingreso"].unique().tolist())
         ingreso_sel = st.multiselect(
-            "️ Ingreso",
+            "Ingreso",
             options=ingreso_opciones,
             default=[],
             key="filtro_ingreso",
@@ -375,14 +785,16 @@ def ejecutar_modo_exitoso():
 
 
         st.button(
-            "️ Generar Reporte Ejecutivo PDF",
+            "Generar reporte ejecutivo PDF",
+            icon=":material/picture_as_pdf:",
             on_click=generar_pdf,
             use_container_width=True,
         )
 
         if st.session_state.pdf_bytes is not None:
             st.download_button(
-                " Descargar Reporte Ejecutivo PDF",
+                "Descargar reporte ejecutivo PDF",
+                icon=":material/download:",
                 data=st.session_state.pdf_bytes,
                 file_name=(
                     f"reporte_flujo_"
@@ -418,14 +830,16 @@ def ejecutar_modo_exitoso():
 
 
         st.button(
-            "️ Generar Reporte Completo Excel",
+            "Generar reporte completo Excel",
+            icon=":material/table_view:",
             on_click=generar_reporte_excel,
             use_container_width=True,
         )
 
         if st.session_state.reporte_excel_bytes is not None:
             st.download_button(
-                " Descargar Reporte Completo",
+                "Descargar reporte completo",
+                icon=":material/download:",
                 data=st.session_state.reporte_excel_bytes,
                 file_name=(
                     f"reporte_flujo_"
@@ -453,14 +867,16 @@ def ejecutar_modo_exitoso():
 
 
         st.button(
-            "️ Preparar Dataset Filtrado",
+            "Preparar dataset filtrado",
+            icon=":material/database:",
             on_click=generar_dataset_filtrado,
             use_container_width=True,
         )
 
         if st.session_state.dataset_filtrado_bytes is not None:
             st.download_button(
-                " Descargar Dataset Filtrado",
+                "Descargar dataset filtrado",
+                icon=":material/download:",
                 data=st.session_state.dataset_filtrado_bytes,
                 file_name=(
                     f"datos_filtrados_"
@@ -505,7 +921,7 @@ def ejecutar_modo_exitoso():
     # Banner de filtros activos
     if filtros_activos:
         st.markdown(
-            f"<div class='warning-box'><i class='bi bi-funnel-fill' style='color:#3B82B8;'></i> <strong>Filtros activos</strong> — Mostrando <strong>{total_filtrado:,}</strong> de <strong>{metricas['total_eventos']:,}</strong> eventos ({total_filtrado/metricas['total_eventos']*100:.1f}%)</div>",
+            f"<div class='warning-box'><span class='material-symbols-rounded'>filter_list</span> <strong>Filtros activos</strong> — Mostrando <strong>{total_filtrado:,}</strong> de <strong>{metricas['total_eventos']:,}</strong> eventos ({total_filtrado/metricas['total_eventos']*100:.1f}%)</div>",
             unsafe_allow_html=True
         )
 
@@ -513,52 +929,56 @@ def ejecutar_modo_exitoso():
         st.warning("No hay datos para los filtros seleccionados. Ajuste los filtros.")
         st.stop()
 
+    mostrar_contexto_resultados(
+        df_biometrico=df_filtrado,
+        mecanismos=["Biométrico"],
+    )
+
     # ─── 1. Métricas principales ─────────────────────────────────────────
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
-        mostrar_metrica("Total de Eventos", total_filtrado, "")
+        mostrar_metrica("Eventos biométricos registrados", total_filtrado, "")
     with col2:
-        mostrar_metrica("Usuarios Únicos", usuarios_filtrado, "")
+        mostrar_metrica("Usuarios identificados", usuarios_filtrado, "")
     with col3:
-        mostrar_metrica("Entradas", entradas_f, "")
+        mostrar_metrica("Eventos de entrada", entradas_f, "")
     with col4:
-        mostrar_metrica("Salidas", salidas_f, "")
+        mostrar_metrica("Eventos de salida", salidas_f, "")
     with col5:
-        mostrar_metrica("Promedio Diario", promedio_f, "")
+        mostrar_metrica("Promedio diario de eventos", promedio_f, "")
 
     st.markdown("")
 
     col6, col7, col8, col9 = st.columns(4)
     with col6:
-        mostrar_metrica("Puntos de Acceso", df_filtrado["Punto de acceso"].nunique(), "")
+        mostrar_metrica("Puntos de acceso identificados", df_filtrado["Punto de acceso"].nunique(), "")
     with col7:
-        mostrar_metrica("Ingreso", df_filtrado["Ingreso"].nunique(), "")
+        mostrar_metrica("Categorías de ingreso", df_filtrado["Ingreso"].nunique(), "")
     with col8:
-        mostrar_metrica("Días Registrados", dias_f, "")
+        mostrar_metrica("Días con registros", dias_f, "")
     with col9:
-        mostrar_metrica("Otros Eventos", otros_f, "")
+        mostrar_metrica("Eventos sin sentido de circulación", otros_f, "")
 
     # ═════════════════════════════════════════════════════════════════════
     # PESTAÑAS PRINCIPALES
     # ═════════════════════════════════════════════════════════════════════
 
     tab_acceso, tab_horario, tab_diario, tab_io, tab_usuario, tab_ingreso, tab_heatmaps, tab_frecuencia, tab_conclusiones, tab_calidad = st.tabs([
-        "Flujo por Acceso",
-        "Flujo Horario",
-        "Flujo Diario",
-        "Entradas vs Salidas",
-        "Tipo de Usuario",
-        "Ingreso",
-        "Heatmaps",
-        "Frecuencia",
-        "Conclusiones",
-        "Calidad de Datos",
+        ":material/door_front: Flujo por acceso",
+        ":material/schedule: Flujo horario",
+        ":material/calendar_month: Flujo diario",
+        ":material/swap_horiz: Entradas vs. salidas",
+        ":material/person: Tipo de usuario",
+        ":material/login: Ingreso",
+        ":material/grid_on: Mapas de calor",
+        ":material/query_stats: Frecuencia",
+        ":material/summarize: Conclusiones",
+        ":material/fact_check: Calidad de datos",
     ])
 
     # ─── TAB 1: Flujo por punto de acceso ────────────────────────────────
     with tab_acceso:
         mostrar_seccion("Flujo por Punto de Acceso")
-        st.markdown("Cada punto de acceso con su volumen de eventos, porcentaje, ingreso y movimiento.")
 
         df_flujo_acceso = flujo_por_punto_acceso(df_filtrado)
 
@@ -581,10 +1001,10 @@ def ejecutar_modo_exitoso():
         )
 
         # Ranking
-        st.markdown("** Ranking Top 5:**")
-        for i, row in df_flujo_acceso.head(5).iterrows():
+        st.markdown("**Cinco puntos de acceso con más eventos registrados**")
+        for posicion, (_, row) in enumerate(df_flujo_acceso.head(5).iterrows(), start=1):
             st.markdown(
-                f"**{i}.** {row['Punto de acceso']} — "
+                f"**{posicion}.º** {row['Punto de acceso']} — "
                 f"{row['Eventos']:,} eventos ({row['Porcentaje']}%) — "
                 f"Ingreso: {row['Ingreso']} — {row['Movimiento']}"
             )
@@ -602,19 +1022,19 @@ def ejecutar_modo_exitoso():
             hp_gen = picos["general"]
             horas_str = ", ".join([f"{h:02d}:00" for h in hp_gen["horas"]])
             empate_str = " (empate)" if hp_gen["empate"] else ""
-            st.metric("Hora Pico General", f"{horas_str}{empate_str}", f"{hp_gen['eventos']:,} eventos")
+            st.metric("Horario con más eventos acumulados", f"{horas_str}{empate_str}", f"{hp_gen['eventos']:,} eventos")
         with col_h2:
             if "entrada" in picos:
                 hp_ent = picos["entrada"]
                 horas_str = ", ".join([f"{h:02d}:00" for h in hp_ent["horas"]])
                 empate_str = " (empate)" if hp_ent["empate"] else ""
-                st.metric("Hora Pico Entrada", f"{horas_str}{empate_str}", f"{hp_ent['eventos']:,} eventos")
+                st.metric("Horario con más entradas acumuladas", f"{horas_str}{empate_str}", f"{hp_ent['eventos']:,} eventos")
         with col_h3:
             if "salida" in picos:
                 hp_sal = picos["salida"]
                 horas_str = ", ".join([f"{h:02d}:00" for h in hp_sal["horas"]])
                 empate_str = " (empate)" if hp_sal["empate"] else ""
-                st.metric("Hora Pico Salida", f"{horas_str}{empate_str}", f"{hp_sal['eventos']:,} eventos")
+                st.metric("Horario con más salidas acumuladas", f"{horas_str}{empate_str}", f"{hp_sal['eventos']:,} eventos")
 
         # Hora pico por ingreso
         if picos.get("por_ingreso"):
@@ -624,7 +1044,7 @@ def ejecutar_modo_exitoso():
                 with cols_ingreso[i]:
                     horas_str = ", ".join([f"{h:02d}:00" for h in datos["horas"]])
                     empate_str = " (empate)" if datos["empate"] else ""
-                    st.metric(f"️ {ingreso}", f"{horas_str}{empate_str}", f"{datos['eventos']:,} eventos")
+                    st.metric(f":material/location_on: {ingreso}", f"{horas_str}{empate_str}", f"{datos['eventos']:,} eventos")
 
         # Gráfico
         fig_hora = grafico_flujo_hora(df_flujo_hora)
@@ -639,7 +1059,6 @@ def ejecutar_modo_exitoso():
 
         # ─── Heatmap punto × hora ───────────────────────────────────────
         mostrar_seccion("Flujo por Punto de Acceso y Hora")
-        st.markdown("¿A qué hora se utiliza más cada ingreso?")
 
         pivot_ph = flujo_punto_hora(df_filtrado)
         fig_heatmap_ph = grafico_heatmap_punto_hora(pivot_ph)
@@ -654,7 +1073,7 @@ def ejecutar_modo_exitoso():
             pico_punto_data = []
             for punto, datos in picos["por_punto"].items():
                 horas_str = ", ".join([f"{h:02d}:00" for h in datos["horas"]])
-                empate_str = " ️" if datos["empate"] else ""
+                empate_str = " (empate)" if datos["empate"] else ""
                 pico_punto_data.append({
                     "Punto de Acceso": punto,
                     "Hora Pico": f"{horas_str}{empate_str}",
@@ -674,12 +1093,12 @@ def ejecutar_modo_exitoso():
         col_d1, col_d2, col_d3 = st.columns(3)
         with col_d1:
             dias_str = ", ".join([str(d) for d in dp["mayor_flujo"]["dias"]])
-            st.metric(" Día Mayor Flujo", dias_str, f"{dp['mayor_flujo']['eventos']:,} eventos")
+            st.metric("Fecha con más eventos", dias_str, f"{dp['mayor_flujo']['eventos']:,} eventos")
         with col_d2:
             dias_str = ", ".join([str(d) for d in dp["menor_flujo"]["dias"]])
-            st.metric(" Día Menor Flujo", dias_str, f"{dp['menor_flujo']['eventos']:,} eventos")
+            st.metric("Fecha con menos eventos", dias_str, f"{dp['menor_flujo']['eventos']:,} eventos")
         with col_d3:
-            st.metric(" Promedio Diario", formato_numero(promedio_f), f"{dias_f} días")
+            st.metric("Promedio diario de eventos", formato_numero(promedio_f), f"{dias_f} días con registros")
 
         # Gráfico
         fig_diario = grafico_flujo_diario(df_diario)
@@ -767,7 +1186,6 @@ def ejecutar_modo_exitoso():
     # ─── TAB 5: Tipo de usuario ─────────────────────────────────────────
     with tab_usuario:
         mostrar_seccion("Flujo por Tipo de Usuario")
-        st.markdown("Categorías reales encontradas en los datos (sin asumir categorías predefinidas).")
 
         df_tipo = flujo_por_tipo_usuario(df_filtrado)
         fig_tipo = grafico_tipo_usuario(df_tipo)
@@ -839,7 +1257,7 @@ def ejecutar_modo_exitoso():
             st.markdown("---")
             st.markdown("""
             <div class="warning-box">
-                ️ <strong>Accesos no clasificados:</strong> Los siguientes puntos de acceso
+                    <span class="material-symbols-rounded">warning</span> <strong>Accesos no clasificados:</strong> Los siguientes puntos de acceso
                 no pudieron ser asignados a un ingreso conocido.
             </div>
             """, unsafe_allow_html=True)
@@ -869,11 +1287,12 @@ def ejecutar_modo_exitoso():
     # ─── TAB 8: Frecuencia de utilización ────────────────────────────────
     with tab_frecuencia:
         mostrar_seccion("Frecuencia de Utilización del Sistema")
-        st.markdown("Distribución de cuántos eventos registra cada usuario.")
 
         rangos_df, stats_df = frecuencia_utilizacion(df_filtrado)
 
         # Estadísticas
+        st.markdown("#### Resumen de frecuencia por usuario")
+        st.caption("Resume el promedio, la mediana y los extremos de eventos asociados a cada usuario identificado.")
         st.dataframe(stats_df, use_container_width=True, hide_index=True)
 
         # Gráfico
@@ -884,6 +1303,8 @@ def ejecutar_modo_exitoso():
         )
 
         # Tabla de rangos
+        st.markdown("#### Usuarios agrupados por cantidad de eventos")
+        st.caption("Cada rango indica cuántos usuarios registraron una cantidad similar de eventos.")
         st.dataframe(
             rangos_df.style.format({"Usuarios": "{:,}"}),
             use_container_width=True,
@@ -895,7 +1316,7 @@ def ejecutar_modo_exitoso():
         mostrar_seccion("Conclusiones y Hallazgos Automáticos")
         st.markdown("""
         <div class="info-box">
-            ℹ️ Las siguientes conclusiones son <strong>observaciones basadas en los datos</strong>.
+            <span class="material-symbols-rounded">info</span> Las siguientes conclusiones son <strong>observaciones basadas en los datos</strong>.
             No representan afirmaciones de causalidad. Los patrones observados deben ser
             interpretados en conjunto con el conocimiento institucional.
         </div>
@@ -936,31 +1357,31 @@ def ejecutar_modo_exitoso():
     # ─── TAB 10: Calidad de datos ────────────────────────────────────────
     with tab_calidad:
         mostrar_seccion("Validación y Calidad de Datos")
-        st.markdown("Reporte de validación inicial del archivo cargado (datos originales, sin filtros).")
+        st.caption("Esta sección utiliza el archivo original y no cambia cuando se aplican filtros al análisis.")
 
         col_q1, col_q2, col_q3 = st.columns(3)
         with col_q1:
-            mostrar_metrica("Total de Registros", calidad["total_registros"], "")
+            mostrar_metrica("Registros originales", calidad["total_registros"], "")
         with col_q2:
-            mostrar_metrica("Registros Válidos", calidad["registros_validos"], "")
+            mostrar_metrica("Registros con fecha válida", calidad["registros_validos"], "")
         with col_q3:
-            mostrar_metrica("Fechas Inválidas", calidad["fechas_invalidas"], "️")
+            mostrar_metrica("Fechas inválidas", calidad["fechas_invalidas"], "event_busy")
 
         col_q4, col_q5, col_q6 = st.columns(3)
         with col_q4:
-            mostrar_metrica("Acceso Vacío", calidad["acceso_vacio"], "")
+            mostrar_metrica("Registros sin punto de acceso", calidad["acceso_vacio"], "")
         with col_q5:
-            mostrar_metrica("Depto. Vacío", calidad["departamento_vacio"], "")
+            mostrar_metrica("Registros sin departamento", calidad["departamento_vacio"], "")
         with col_q6:
-            mostrar_metrica("Sin Nombre/Apellido", calidad["registros_sin_nombre"], "")
+            mostrar_metrica("Registros sin nombre o apellido", calidad["registros_sin_nombre"], "")
 
         st.markdown("---")
 
         col_u1, col_u2, col_u3 = st.columns(3)
         with col_u1:
-            mostrar_metrica("Puntos de Acceso Únicos", calidad["unicos_punto_acceso"], "")
+            mostrar_metrica("Puntos de acceso diferentes", calidad["unicos_punto_acceso"], "")
         with col_u2:
-            mostrar_metrica("Device Name Únicos", calidad["unicos_device_name"], "")
+            mostrar_metrica("Dispositivos diferentes", calidad["unicos_device_name"], "")
         # Nulos detallados
         mostrar_seccion("Valores Nulos por Columna")
         nulos_df = pd.DataFrame(
@@ -985,10 +1406,17 @@ def ejecutar_modo_exitoso():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def ejecutar_modo_fallidos():
-    st.markdown("<h1><i class='bi bi-exclamation-triangle-fill' style='color:#D66A6A;'></i> Análisis de Eventos Anormales</h1>", unsafe_allow_html=True)
+    # Compatibilidad histórica, deliberadamente fuera de la navegación activa.
+    from deprecated.eventos_fallidos.failed_data_loader import cargar_excel_fallidos, detectar_columnas_fallidos, reporte_calidad_fallidos
+    from deprecated.eventos_fallidos.failed_data_processing import procesar_datos_fallidos
+    from deprecated.eventos_fallidos import failed_statistics_calc as fs
+    from deprecated.eventos_fallidos import failed_visualizations as fv
+    from deprecated.eventos_fallidos.failed_pdf_report import exportar_reporte_fallidos_pdf
+
+    st.title(":material/warning: Análisis de eventos anormales")
     st.markdown("Cargue un archivo Excel que contenga los registros de eventos anormales para su análisis independiente.")
     
-    archivo_subido = st.file_uploader("Cargar Excel de Eventos Anormales", type=["xlsx"])
+    archivo_subido = st.file_uploader(":material/upload_file: Cargar Excel de eventos anormales", type=["xlsx"])
     
     if not archivo_subido:
         st.info("Esperando archivo. Por favor, suba un archivo Excel (.xlsx) para continuar.")
@@ -999,35 +1427,38 @@ def ejecutar_modo_fallidos():
     calidad = reporte_calidad_fallidos(df_crudo, mapeo)
     
     if calidad["columnas_faltantes"]:
-        st.warning(f"️ Las siguientes columnas clave no fueron detectadas: {', '.join(calidad['columnas_faltantes'])}. Algunas funcionalidades podrían no estar disponibles.")
+        st.warning(f"Las siguientes columnas clave no fueron detectadas: {', '.join(calidad['columnas_faltantes'])}. Algunas funcionalidades podrían no estar disponibles.", icon=":material/warning:")
         
     df, metricas = procesar_datos_fallidos(df_crudo, mapeo)
     
     # Excluir la categoría '25 DE JUNIO' del tipo de usuario / departamento
     df = df[df["Tipo_Usuario"] != "25 DE JUNIO"]
     
+    fecha_min = pd.to_datetime(df["Fecha"].dropna()).min() if not df["Fecha"].dropna().empty else None
+    fecha_max = pd.to_datetime(df["Fecha"].dropna()).max() if not df["Fecha"].dropna().empty else None
+    ingresos = sorted([str(x) for x in df["Ingreso"].unique()])
+
     # ─── SIDEBAR: Filtros para Eventos Anormales ───
     with st.sidebar:
-        st.markdown("## <i class='bi bi-funnel'></i> Filtros Eventos Anormales", unsafe_allow_html=True)
-        if st.button(" Restablecer filtros anormales", key="reset_fallidos", use_container_width=True):
-            # Eliminar todo el state de este modo
-            for key in list(st.session_state.keys()):
-                if key.startswith("ff_"):
-                    del st.session_state[key]
-            st.rerun()
+        st.markdown("## :material/filter_list: Filtros de eventos anormales")
+        st.button(
+            " Restablecer filtros anormales",
+            icon=":material/restart_alt:",
+            key="reset_fallidos",
+            use_container_width=True,
+            on_click=restablecer_widgets,
+            args=({"ff_inicio": fecha_min, "ff_fin": fecha_max, "ff_ingreso": ingresos},),
+        )
             
         st.markdown("---")
         
-        fecha_min = pd.to_datetime(df["Fecha"].dropna()).min() if not df["Fecha"].dropna().empty else None
-        fecha_max = pd.to_datetime(df["Fecha"].dropna()).max() if not df["Fecha"].dropna().empty else None
         if pd.notnull(fecha_min) and pd.notnull(fecha_max):
             fecha_inicio = st.date_input(" Fecha inicio", value=fecha_min, min_value=fecha_min, max_value=fecha_max, key="ff_inicio")
             fecha_fin = st.date_input(" Fecha fin", value=fecha_max, min_value=fecha_min, max_value=fecha_max, key="ff_fin")
         else:
             fecha_inicio, fecha_fin = None, None
             
-        ingresos = sorted([str(x) for x in df["Ingreso"].unique()])
-        ingreso_sel = st.multiselect("️ Ingreso", options=ingresos, default=ingresos, key="ff_ingreso")
+        ingreso_sel = st.multiselect("Ingreso", options=ingresos, default=ingresos, key="ff_ingreso")
         
     # ─── Aplicar Filtros ───
     df_f = df.copy()
@@ -1039,6 +1470,11 @@ def ejecutar_modo_fallidos():
     if df_f.empty:
         st.warning("No hay datos que coincidan con los filtros seleccionados.")
         st.stop()
+
+    mostrar_contexto_resultados(
+        df_biometrico=df_f,
+        mecanismos=["Eventos biométricos anormales"],
+    )
         
     # ─── Cálculos ───
     stats = {
@@ -1057,9 +1493,9 @@ def ejecutar_modo_fallidos():
     with col1: mostrar_metrica("Total Eventos Anormales", len(df_f), "")
     with col2: 
         if not stats["por_ingreso"].empty:
-            mostrar_metrica("Ingreso más afectado", stats["por_ingreso"].iloc[0]["Ingreso"], "️")
+            mostrar_metrica("Ingreso más afectado", stats["por_ingreso"].iloc[0]["Ingreso"], "warning")
         else:
-            mostrar_metrica("Ingreso", "N/A", "️")
+            mostrar_metrica("Ingreso", "N/A", "warning")
     with col3: mostrar_metrica("Días Analizados", df_f["Fecha"].nunique() if not df_f["Fecha"].dropna().empty else 0, "")
     
     mostrar_seccion("1. Comportamiento Temporal")
@@ -1083,13 +1519,14 @@ def ejecutar_modo_fallidos():
         st.info(c)
         
     with st.sidebar:
-        st.markdown("## <i class='bi bi-download'></i> Exportar Reporte", unsafe_allow_html=True)
-        if st.button(" Generar Reporte PDF (Anormales)", use_container_width=True, type="primary"):
+        st.markdown("## :material/download: Exportar reporte")
+        if st.button("Generar reporte PDF (anormales)", icon=":material/picture_as_pdf:", use_container_width=True, type="primary"):
             with st.spinner("Generando PDF..."):
                 try:
                     pdf_buffer = exportar_reporte_fallidos_pdf(df_f, stats, conclusiones)
                     st.download_button(
-                        label="⬇️ Descargar PDF",
+                        label="Descargar PDF",
+                        icon=":material/download:",
                         data=pdf_buffer,
                         file_name=f"Reporte_Eventos_Anormales_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                         mime="application/pdf",
@@ -1104,39 +1541,78 @@ def ejecutar_modo_fallidos():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def ejecutar_modo_todos():
-    st.markdown("<h1><i class='bi bi-layers-fill' style='color:#3B82B8;'></i> Reporte Ejecutivo - Sistema de Accesos UTMACH</h1>", unsafe_allow_html=True)
+    st.title(":material/dashboard: Sistema de Accesos UTMACH")
     st.markdown("Cargue los archivos correspondientes a eventos biométricos y vehiculares. El análisis biométrico es obligatorio.")
     
     col_bio, col_lpr = st.columns(2)
     with col_bio:
-        archivo_subido = st.file_uploader("📄 EVENTOS BIOMÉTRICOS (Obligatorio)", type=["xlsx"], key="uploader_todos")
+        archivo_subido = st.file_uploader(":material/upload_file: Eventos biométricos (obligatorio)", type=["xlsx"], key="uploader_todos")
     with col_lpr:
-        archivo_lpr = st.file_uploader("🚗 EVENTOS VEHICULARES LPR (Opcional)", type=["xlsx"], key="uploader_lpr")
+        archivo_lpr = st.file_uploader(":material/directions_car: Eventos vehiculares LPR (opcional)", type=["xlsx"], key="uploader_lpr")
     
     if not archivo_subido:
         st.info("Esperando archivo. Por favor, suba el archivo Excel de Eventos Biométricos (.xlsx) para continuar.")
         st.stop()
-        
-    # Cargar datos
-    df_crudo = cargar_excel_todos(archivo_subido)
-    
-    # Detectar columnas
-    mapeo = detectar_columnas_todos(df_crudo)
-    
-    # Validar
-    calidad = reporte_calidad_todos(df_crudo, mapeo)
-    if calidad["columnas_faltantes"]:
-        st.error(f" No se pudieron detectar las siguientes columnas requeridas: {', '.join(calidad['columnas_faltantes'])}")
+
+    archivo_biometrico_id = _archivo_id(archivo_subido)
+    archivo_lpr_id = _archivo_id(archivo_lpr) if archivo_lpr is not None else None
+    cache_biometrico = st.session_state.get("_biometrico_preparado")
+    cache_lpr = st.session_state.get("_lpr_preparado")
+    biometrico_en_sesion = bool(
+        cache_biometrico and cache_biometrico["archivo_id"] == archivo_biometrico_id
+    )
+    lpr_en_sesion = archivo_lpr is None or bool(
+        cache_lpr and cache_lpr["archivo_id"] == archivo_lpr_id
+    )
+
+    progreso_carga = None
+    if not (biometrico_en_sesion and lpr_en_sesion):
+        estado_carga = st.status(
+            "Preparando archivos de acceso",
+            state="running",
+            expanded=True,
+        )
+        barra_carga = estado_carga.progress(
+            0,
+            text="**0%** · Validando archivos seleccionados",
+        )
+        cronometro_carga = LiveElapsedTimer(estado_carga)
+        progreso_carga = LoadProgress(
+            estado_carga,
+            barra_carga,
+            live_timer=cronometro_carga,
+        )
+        progreso_carga.start_stage("Validación de archivos")
+        progreso_carga.finish_stage(12, "Validación de archivos completada")
+
+    # Preparar una sola vez el archivo biométrico durante esta sesión.
+    try:
+        datos_biometricos = _preparar_biometrico_sesion(
+            archivo_subido,
+            archivo_id=archivo_biometrico_id,
+            progreso=progreso_carga,
+        )
+    except Exception as exc:
+        if progreso_carga:
+            progreso_carga.fail("Error durante la lectura del Excel biométrico")
+        st.error(f"No fue posible procesar el Excel biométrico: {exc}")
         st.stop()
-        
-    # Procesar Biométrico
-    df_todos, metricas = procesar_datos_todos(df_crudo, mapeo)
-    
-    # Excluir la categoría '25 DE JUNIO' del tipo de usuario / departamento
-    df_todos = df_todos[df_todos["Tipo_Usuario"] != "25 DE JUNIO"]
+    if datos_biometricos["columnas_faltantes"]:
+        if progreso_carga:
+            progreso_carga.fail("El Excel biométrico no contiene todas las columnas requeridas")
+        st.error(
+            "No se pudieron detectar las siguientes columnas requeridas: "
+            f"{', '.join(datos_biometricos['columnas_faltantes'])}"
+        )
+        st.stop()
+    df_todos = datos_biometricos["df"]
+    metricas = datos_biometricos["metricas"]
+    calidad = datos_biometricos["calidad"]
     
     if df_todos.empty:
-        st.warning("️ No se encontraron registros biométricos válidos tras el procesamiento.")
+        if progreso_carga:
+            progreso_carga.fail("No se encontraron registros biométricos válidos")
+        st.warning("No se encontraron registros biométricos válidos tras el procesamiento.", icon=":material/warning:")
         st.stop()
         
     # Procesar LPR si existe
@@ -1146,75 +1622,197 @@ def ejecutar_modo_todos():
     metricas_lpr = {}
     if archivo_lpr is not None:
         try:
-            df_lpr_crudo = cargar_excel_lpr(archivo_lpr)
-            mapeo_lpr = detectar_columnas_lpr(df_lpr_crudo)
-            calidad_lpr = reporte_calidad_lpr(df_lpr_crudo, mapeo_lpr)
-            if not calidad_lpr["columnas_faltantes"]:
-                df_lpr_procesado, metricas_lpr_proc = procesar_datos_lpr(df_lpr_crudo, mapeo_lpr)
-                df_lpr_valido_tmp, df_lpr_duplicados_tmp = deduplicar_eventos_vehiculares(df_lpr_procesado)
-                df_lpr_valido = df_lpr_valido_tmp
-                df_lpr_duplicados = df_lpr_duplicados_tmp
-            else:
-                st.sidebar.error(f"Error LPR: Faltan columnas {', '.join(calidad_lpr['columnas_faltantes'])}")
-        except Exception as e:
-            st.sidebar.error(f"Error procesando LPR: {str(e)}")
-        
-    # SIDEBAR Filtros
-    with st.sidebar:
-        st.markdown("## <i class='bi bi-funnel'></i> Filtros (Integral)", unsafe_allow_html=True)
-        
-        if st.button(" Restablecer filtros", key="reset_todos", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                if key.startswith("filt_"):
-                    del st.session_state[key]
-            st.rerun()
-            
-        st.markdown("---")
-        
-        fechas = pd.to_datetime(df_todos["Fecha"].dropna()).dt.date.unique()
-        if len(fechas) > 0:
-            min_date = min(fechas)
-            max_date = max(fechas)
-            rango_fechas = st.date_input(
-                "Rango de Fechas", 
-                value=(min_date, max_date), 
-                min_value=min_date, 
-                max_value=max_date,
-                key="filt_fechas_todos"
+            datos_lpr = _preparar_lpr_sesion(
+                archivo_lpr,
+                archivo_id=archivo_lpr_id,
+                progreso=progreso_carga,
             )
-        else:
-            rango_fechas = ()
-            
-        sel_resultados = st.multiselect("Resultado", options=df_todos["Resultado"].unique(), default=[], key="filt_res", placeholder="Todos")
-        sel_ingreso = st.multiselect("Ingreso", options=df_todos["Ingreso"].unique(), default=[], key="filt_ingreso_todos", placeholder="Todos")
-        sel_tipo_usu = st.multiselect("Tipo Usuario", options=df_todos["Tipo_Usuario"].unique(), default=[], key="filt_tipo_usu_todos", placeholder="Todos")
+            if not datos_lpr["columnas_faltantes"]:
+                df_lpr_crudo = datos_lpr["df_crudo"]
+                df_lpr_valido = datos_lpr["df_valido"]
+                df_lpr_duplicados = datos_lpr["df_duplicados"]
+                metricas_lpr = datos_lpr["metricas"]
+            else:
+                if progreso_carga:
+                    progreso_carga.fail("El Excel LPR no contiene todas las columnas requeridas")
+                st.sidebar.error(
+                    "Error LPR: Faltan columnas "
+                    f"{', '.join(datos_lpr['columnas_faltantes'])}"
+                )
+        except Exception as e:
+            if progreso_carga:
+                progreso_carga.fail("Error durante la lectura o depuración del Excel LPR")
+            st.sidebar.error(f"Error procesando LPR: {str(e)}")
+    elif progreso_carga:
+        progreso_carga.start_stage("Archivo LPR opcional no proporcionado")
+        progreso_carga.finish_stage(62, "Lectura LPR omitida")
+        progreso_carga.finish_stage(75, "Normalización y deduplicación LPR omitidas")
         
-    # Aplicar filtros
-    df_f = df_todos.copy()
-    if len(rango_fechas) == 2:
-        df_f = df_f[(df_f["Fecha"] >= rango_fechas[0]) & (df_f["Fecha"] <= rango_fechas[1])]
-    if sel_resultados:
-        df_f = df_f[df_f["Resultado"].isin(sel_resultados)]
-    if sel_ingreso:
-        df_f = df_f[df_f["Ingreso"].isin(sel_ingreso)]
-    if sel_tipo_usu:
-        df_f = df_f[df_f["Tipo_Usuario"].isin(sel_tipo_usu)]
-        
-    if df_f.empty:
-        st.warning("No hay datos biométricos que coincidan con los filtros seleccionados.")
-        st.stop()
-        
-    # Aplicar filtros a LPR si existe
-    df_lpr_f = pd.DataFrame()
-    if df_lpr_valido is not None and not df_lpr_valido.empty:
-        df_lpr_f = df_lpr_valido.copy()
-        if len(rango_fechas) == 2:
-            df_lpr_f = df_lpr_f[(df_lpr_f["Fecha"] >= rango_fechas[0]) & (df_lpr_f["Fecha"] <= rango_fechas[1])]
+    fechas_bio = set(pd.to_datetime(df_todos["Fecha"].dropna()).dt.date.unique())
+    fechas_lpr = (
+        set(pd.to_datetime(df_lpr_valido["Fecha"].dropna()).dt.date.unique())
+        if df_lpr_valido is not None and not df_lpr_valido.empty else set()
+    )
+    fechas = sorted(fechas_bio | fechas_lpr)
+    min_date = min(fechas) if len(fechas) > 0 else None
+    max_date = max(fechas) if len(fechas) > 0 else None
 
+    ubicaciones_disponibles = sorted(
+        set(df_todos["Ubicacion_Ingreso"].dropna().astype(str))
+        | (
+            set(df_lpr_valido["Ubicacion_Ingreso"].dropna().astype(str))
+            if df_lpr_valido is not None and not df_lpr_valido.empty
+            else set()
+        )
+    )
+    ubicaciones_disponibles = [
+        ubicacion
+        for ubicacion in ubicaciones_disponibles
+        if ubicacion in {"25 de Junio", "Ferroviaria"}
+    ]
+    puntos_disponibles = sorted(
+        set(df_todos["Punto de acceso"].dropna().astype(str))
+        | (
+            set(df_lpr_valido["Camara"].dropna().astype(str))
+            if df_lpr_valido is not None and not df_lpr_valido.empty and "Camara" in df_lpr_valido.columns
+            else set()
+        )
+    )
+    movimientos_disponibles = sorted(
+        set(df_todos["Movimiento"].dropna().astype(str).str.upper())
+        | (
+            set(df_lpr_valido["Direccion"].dropna().astype(str).str.upper())
+            if df_lpr_valido is not None and not df_lpr_valido.empty else set()
+        )
+    )
+    rango_predeterminado = (min_date, max_date) if min_date is not None else ()
+    filtros_predeterminados = {
+        "rango_fechas": rango_predeterminado,
+        "resultados": [],
+        "ingresos": [],
+        "tipos_usuario": [],
+        "ubicaciones": [],
+        "mecanismos": [],
+        "puntos_acceso": [],
+        "movimientos": [],
+    }
+    widgets_predeterminados = {
+        "filt_fechas_todos": rango_predeterminado,
+        "filt_res": [],
+        "filt_ingreso_todos": [],
+        "filt_tipo_usu_todos": [],
+        "filt_ubicacion_todos": [],
+        "filt_mecanismo_todos": [],
+        "filt_punto_todos": [],
+        "filt_movimiento_todos": [],
+    }
+    conjunto_id = (
+        datos_biometricos["archivo_id"],
+        datos_lpr["archivo_id"] if archivo_lpr is not None and "datos_lpr" in locals() else None,
+    )
+    if st.session_state.get("_conjunto_filtros_todos") != conjunto_id:
+        restablecer_widgets(widgets_predeterminados)
+        st.session_state["filtros_aplicados_todos"] = filtros_predeterminados.copy()
+        st.session_state["_conjunto_filtros_todos"] = conjunto_id
+
+    # SIDEBAR: los widgets son un borrador; solo el submit modifica resultados.
+    with st.sidebar:
+        st.markdown("## :material/filter_list: Filtros")
+
+        st.button(
+            "Restablecer filtros",
+            icon=":material/restart_alt:",
+            key="reset_todos",
+            use_container_width=True,
+            on_click=_restablecer_filtros_todos,
+            args=(widgets_predeterminados, filtros_predeterminados),
+        )
+
+        with st.form("form_filtros_todos", border=False, enter_to_submit=False):
+            if len(fechas) > 0:
+                st.date_input(
+                    "Rango de fechas",
+                    min_value=min_date,
+                    max_value=max_date,
+                    key="filt_fechas_todos",
+                )
+            st.multiselect(
+                "Ubicación",
+                options=ubicaciones_disponibles,
+                key="filt_ubicacion_todos",
+                placeholder="Todas",
+            )
+            st.multiselect(
+                "Punto de acceso / cámara",
+                options=puntos_disponibles,
+                key="filt_punto_todos",
+                placeholder="Todos",
+            )
+            st.multiselect(
+                "Movimiento",
+                options=movimientos_disponibles,
+                key="filt_movimiento_todos",
+                placeholder="Todos",
+            )
+            st.multiselect(
+                "Mecanismo en vistas consolidadas",
+                options=list(MECANISMOS_CONSOLIDADOS),
+                key="filt_mecanismo_todos",
+                placeholder="Todos",
+                help="Controla qué fuentes participan en los indicadores y gráficos consolidados. Los análisis propios de cada fuente permanecen disponibles.",
+            )
+            st.multiselect(
+                "Resultado biométrico",
+                options=sorted(df_todos["Resultado"].dropna().unique()),
+                key="filt_res",
+                placeholder="Todos",
+            )
+            st.multiselect(
+                "Ingreso biométrico",
+                options=sorted(df_todos["Ingreso"].dropna().unique()),
+                key="filt_ingreso_todos",
+                placeholder="Todos",
+            )
+            st.multiselect(
+                "Tipo de usuario",
+                options=sorted(df_todos["Tipo_Usuario"].dropna().unique()),
+                key="filt_tipo_usu_todos",
+                placeholder="Todos",
+            )
+            st.form_submit_button(
+                "Aplicar filtros",
+                icon=":material/filter_alt:",
+                type="primary",
+                width="stretch",
+                on_click=_aplicar_filtros_todos_desde_widgets,
+            )
+
+        st.caption("Los resultados solo cambian al aplicar o restablecer los filtros.")
+
+    filtros_aplicados = st.session_state["filtros_aplicados_todos"]
+    rango_fechas = filtros_aplicados["rango_fechas"]
+    sel_resultados = filtros_aplicados["resultados"]
+    sel_ingreso = filtros_aplicados["ingresos"]
+    sel_tipo_usu = filtros_aplicados["tipos_usuario"]
+
+    df_f, df_lpr_f = aplicar_filtros_integrales(
+        df_todos,
+        df_lpr_valido,
+        filtros_aplicados,
+    )
+        
+    if df_f.empty and df_lpr_f.empty:
+        st.warning("No hay registros biométricos ni LPR que coincidan con los filtros seleccionados.")
+        st.stop()
+    if df_f.empty:
+        st.info("No hay datos biométricos para este contexto; se muestran los resultados LPR disponibles.")
+        
     # Construcción de df_consolidado_total para métricas globales
-    df_consolidado_total = df_f.copy()
+    incluir_biometrico = mecanismo_incluido(filtros_aplicados, MECANISMO_BIOMETRICO)
+    incluir_lpr = mecanismo_incluido(filtros_aplicados, MECANISMO_LPR)
+    df_consolidado_total = df_f.copy() if incluir_biometrico else df_f.iloc[0:0].copy()
     
-    if not df_lpr_f.empty:
+    if incluir_lpr and not df_lpr_f.empty:
         df_lpr_mapped = df_lpr_f.copy()
         
         # Mapear columnas LPR al estándar base
@@ -1230,168 +1828,359 @@ def ejecutar_modo_todos():
         df_lpr_mapped["Movimiento"] = df_lpr_mapped["Direccion"].apply(map_movimiento)
         df_lpr_mapped["Tipo_Usuario"] = df_lpr_mapped["Lista_Vehiculos"] if "Lista_Vehiculos" in df_lpr_mapped.columns else "Vehículo"
         df_lpr_mapped["Persona"] = df_lpr_mapped["Matricula"]
+        df_lpr_mapped["Persona_Analitica"] = "PLACA::" + df_lpr_mapped["Matricula"].astype(str)
         df_lpr_mapped["Resultado"] = "Exitoso"  # LPR valid reads are implicitly successful
         
         # Concatenar asegurando que coincidan las dimensiones requeridas
         df_consolidado_total = pd.concat([df_f, df_lpr_mapped], ignore_index=True)
 
         
-    # Calcular estadísticas nuevas
-    tasas = ats.calcular_tasas_generales(df_f)
-    # --- Cálculos de Analítica Avanzada ---
-    top_usuarios_fallos = ats.calcular_top_usuarios_fallos(df_f)
-    anomalias_avanzadas = ats.detectar_anomalias_avanzadas(df_f)
-    
-    # Intentar calcular periodo anterior
-    comparacion_periodos = {}
-    if len(rango_fechas) == 2 and (rango_fechas[1] - rango_fechas[0]).days > 0:
-        dias_diferencia = (rango_fechas[1] - rango_fechas[0]).days + 1
-        fecha_fin_anterior = rango_fechas[0] - pd.Timedelta(days=1)
-        fecha_inicio_anterior = fecha_fin_anterior - pd.Timedelta(days=dias_diferencia - 1)
-        
-        df_anterior = df_todos.copy()
-        df_anterior = df_anterior[(df_anterior["Fecha"] >= fecha_inicio_anterior) & (df_anterior["Fecha"] <= fecha_fin_anterior)]
-        if not df_anterior.empty:
-            comparacion_periodos = ats.comparar_periodos(df_f, df_anterior)
-    # --------------------------------------
+    # Reutilizar agregaciones mientras no cambien el archivo ni los filtros aplicados.
+    clave_analitica = (conjunto_id, _clave_filtros(filtros_aplicados))
+    cache_analitica = st.session_state.get("_analitica_integral")
+    if progreso_carga and not progreso_carga.failed:
+        progreso_carga.start_stage("Preparación de estadísticas iniciales")
+    if cache_analitica and cache_analitica["clave"] == clave_analitica:
+        tasas = cache_analitica["tasas"]
+        stats_nuevas = cache_analitica["stats_nuevas"]
+        conclusiones = cache_analitica["conclusiones"]
+        stats_base = cache_analitica["stats_base"]
+    else:
+        tasas, stats_nuevas, conclusiones, stats_base = _calcular_analitica_integral(
+            df_f,
+            df_todos,
+            df_consolidado_total,
+            filtros_aplicados,
+        )
+        st.session_state["_analitica_integral"] = {
+            "clave": clave_analitica,
+            "tasas": tasas,
+            "stats_nuevas": stats_nuevas,
+            "conclusiones": conclusiones,
+            "stats_base": stats_base,
+        }
 
-    stats_nuevas = {
-        "resultados": ats.stats_resultados(df_f),
-        "cruce_ingreso": ats.stats_cruce_ingreso_resultado(df_f),
-        "cruce_hora": ats.stats_cruce_hora_resultado(df_f),
-        "evolucion_diaria": ats.stats_evolucion_resultado(df_f),
-        "dia_semana": ats.stats_dia_semana_resultado(df_f),
-        "cruce_usuario": ats.stats_tipo_usuario_resultado(df_f),
-        "cruce_punto": ats.stats_punto_acceso_resultado(df_f),
-        "cruce_device": ats.stats_device_resultado(df_f),
-        "heatmap": ats.stats_heatmap_dia_hora(df_f),
-        "anomalias": ats.stats_comportamiento_anormal(df_f),
-        "top_fallos": top_usuarios_fallos,
-        "anomalias_avanzadas": anomalias_avanzadas,
-        "comparacion_periodos": comparacion_periodos
-    }
-    conclusiones = ats.generar_conclusiones_todos(df_f, tasas, stats_nuevas)
-    
-    # Calcular estadísticas base heredadas usando el total consolidado (Biométrico + LPR)
-    stats_base = {
-        "flujo_punto_acceso": flujo_por_punto_acceso(df_consolidado_total),
-        "flujo_hora": flujo_por_hora(df_consolidado_total),
-        "heatmap_punto_hora": flujo_punto_hora(df_consolidado_total),
-        "heatmap_consolidado_hora": flujo_consolidado_hora(df_consolidado_total),
-        "entradas_salidas": entradas_vs_salidas_general(df_consolidado_total),
-        "entradas_salidas_hora": entradas_vs_salidas_por_hora(df_consolidado_total),
-        "entradas_salidas_ingreso": entradas_vs_salidas_por_ingreso(df_consolidado_total),
-        "flujo_ingreso": flujo_por_ingreso(df_consolidado_total),
-        "flujo_consolidado": flujo_consolidado(df_consolidado_total),
-        "tipo_usuario": flujo_por_tipo_usuario(df_consolidado_total),
-        "tipo_usuario_ingreso": tipo_usuario_ingreso(df_consolidado_total),
-        "flujo_diario": flujo_diario(df_consolidado_total),
-        "flujo_diario_ingreso": flujo_diario_por_ingreso(df_consolidado_total),
-        "dia_semana": flujo_dia_semana(df_consolidado_total),
-        "heatmap_dia_hora": heatmap_dia_hora(df_consolidado_total),
-        "ingreso_hora": ingreso_hora(df_consolidado_total),
-        "punto_tipo_usuario": punto_tipo_usuario(df_consolidado_total),
-        "frecuencia": frecuencia_utilizacion(df_consolidado_total)[0],
-    }
+    if progreso_carga and not progreso_carga.failed:
+        progreso_carga.finish_stage(88, "Preparación de estadísticas completada")
+        progreso_carga.start_stage("Finalización de carga")
+        progreso_carga.complete("Carga y preparación finalizadas")
+
+    mecanismos_contexto = []
+    if incluir_biometrico:
+        mecanismos_contexto.append("Biométrico")
+    if incluir_lpr:
+        mecanismos_contexto.append("Reconocimiento LPR")
+    mostrar_contexto_resultados(
+        df_biometrico=df_f if incluir_biometrico else None,
+        df_lpr=df_lpr_f if incluir_lpr else None,
+        mecanismos=mecanismos_contexto,
+    )
     
     # Render Dashboard
     
     tab_resumen, tab_flujo_gen, tab_dist_det, tab_comp_hor, tab_comp_det, tab_resultados, tab_frecuencia, tab_analitica, tab_calidad, tab_lpr = st.tabs([
-        "Resumen de Movilidad",
-        "Flujo General",
-        "Distribución Detallada",
-        "Comportamiento Horario",
-        "Comportamiento Detallado",
-        "Resultados",
-        "Frecuencia",
-        "Analítica Avanzada",
-        "Calidad de Datos",
-        "Análisis Vehicular LPR"
+        ":material/dashboard: Resumen de movilidad",
+        ":material/bar_chart: Flujo general",
+        ":material/table_chart: Distribución detallada",
+        ":material/schedule: Comportamiento horario",
+        ":material/analytics: Comportamiento detallado",
+        ":material/fact_check: Resultados",
+        ":material/query_stats: Frecuencia",
+        ":material/monitoring: Analítica avanzada",
+        ":material/verified: Calidad de datos",
+        ":material/directions_car: Análisis vehicular LPR"
     ])
     
     with tab_resumen:
         mostrar_seccion("Resumen General de Movilidad")
         
         # Huella de Movilidad
-        huella = lprs.generar_huella_movilidad(df_f, df_lpr_valido if 'df_lpr_valido' in locals() else None)
+        huella = lprs.generar_huella_movilidad(
+            df_f if incluir_biometrico else df_f.iloc[0:0],
+            df_lpr_f if incluir_lpr else df_lpr_f.iloc[0:0],
+        )
+        stats_vehicular_consolidado = lprs.calcular_estadisticas_vehiculares_consolidadas(
+            huella["eventos_vehiculares"]
+        )
         
         st.markdown("""
-<div style="text-align: center; margin-bottom: 30px; font-family: sans-serif;">
-<div style="color: #3B82B8; font-size: 20px; font-weight: bold; letter-spacing: 1px; margin-bottom: 5px;">HUELLA DE MOVILIDAD</div>
-<div style="color: #E8EEF3; font-size: 36px; font-weight: bold;">{tot_registros:,} <span style="font-size: 18px; color: #738291; font-weight: normal;">REGISTROS ANALIZADOS</span></div>
+<div class="mobility-heading">
+<div class="mobility-heading__title">HUELLA DE MOVILIDAD</div>
+<div class="mobility-heading__value">{tot_registros:,} <span class="mobility-heading__label">REGISTROS ANALIZADOS</span></div>
 </div>
 """.format(tot_registros=huella['tot_registros']), unsafe_allow_html=True)
 
         c_h1, c_h2, c_h3 = st.columns(3)
         with c_h1:
             st.markdown(f"""
-<div style="background-color: #141E29; border: 1px solid #263746; border-radius: 8px; padding: 20px; text-align: center; height: 100%; font-family: sans-serif;">
-<div style="color: #A8B5C1; font-size: 13px; font-weight: bold; margin-bottom: 10px;">PEATONAL / BIOMÉTRICO</div>
-<div style="color: #5AA6D6; font-size: 32px; font-weight: bold;">{huella['tot_peatones_puros']:,}</div>
-<div style="color: #738291; font-size: 14px; margin-bottom: 15px;">{huella['pct_peatones_puros']}%</div>
-<div style="color: #A8B5C1; font-size: 12px;">Registros en terminales biométricos</div>
+<div class="mobility-card mobility-card--blue">
+<div class="mobility-card__title">PEATONAL / BIOMÉTRICO</div>
+<div class="mobility-card__value">{huella['tot_peatones_puros']:,}</div>
+<div class="mobility-card__percentage">{huella['pct_peatones_puros']}%</div>
+<div class="mobility-card__description">Registros biométricos clasificados como peatonales</div>
 </div>
 """, unsafe_allow_html=True)
 
         with c_h2:
             st.markdown(f"""
-<div style="background-color: #141E29; border: 1px solid #263746; border-radius: 8px; padding: 20px; text-align: center; height: 100%; font-family: sans-serif;">
-<div style="color: #A8B5C1; font-size: 13px; font-weight: bold; margin-bottom: 10px;">TERMINALES VEH</div>
-<div style="color: #F39C12; font-size: 32px; font-weight: bold;">{huella['tot_terminales_veh']:,}</div>
-<div style="color: #738291; font-size: 14px; margin-bottom: 15px;">{huella['pct_terminales_veh']}%</div>
-<div style="color: #A8B5C1; font-size: 12px;">Registros biométricos en terminales vehiculares</div>
+<div class="mobility-card mobility-card--orange">
+<div class="mobility-card__title">TERMINALES VEH</div>
+<div class="mobility-card__value">{huella['tot_terminales_veh']:,}</div>
+<div class="mobility-card__percentage">{huella['pct_terminales_veh']}%</div>
+<div class="mobility-card__description">Registros biométricos en terminales vehiculares</div>
 </div>
 """, unsafe_allow_html=True)
 
         with c_h3:
             st.markdown(f"""
-<div style="background-color: #141E29; border: 1px solid #263746; border-radius: 8px; padding: 20px; text-align: center; height: 100%; font-family: sans-serif;">
-<div style="color: #A8B5C1; font-size: 13px; font-weight: bold; margin-bottom: 10px;">RECONOCIMIENTO LPR</div>
-<div style="color: #1ABC9C; font-size: 32px; font-weight: bold;">{huella['tot_lpr']:,}</div>
-<div style="color: #738291; font-size: 14px; margin-bottom: 15px;">{huella['pct_lpr']}%</div>
-<div style="display: flex; justify-content: space-around; border-top: 1px solid #263746; padding-top: 10px;">
-<div><div style="color: #A8B5C1; font-size: 11px;">RECONOCIDAS</div><div style="color: #E8EEF3; font-size: 16px; font-weight:bold;">{huella['placas_reconocidas']:,}</div></div>
-<div><div style="color: #A8B5C1; font-size: 11px;">ÚNICAS</div><div style="color: #E8EEF3; font-size: 16px; font-weight:bold;">{huella['placas_unicas']:,}</div></div>
+<div class="mobility-card mobility-card--green">
+<div class="mobility-card__title">RECONOCIMIENTO LPR</div>
+<div class="mobility-card__value">{huella['tot_lpr']:,}</div>
+<div class="mobility-card__percentage">{huella['pct_lpr']}%</div>
+<div class="mobility-card__details">
+<div><div class="mobility-card__detail-label">RECONOCIDAS</div><div class="mobility-card__detail-value">{huella['placas_reconocidas']:,}</div></div>
+<div><div class="mobility-card__detail-label">ÚNICAS</div><div class="mobility-card__detail-value">{huella['placas_unicas']:,}</div></div>
 </div>
 </div>
 """, unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
+
+        if huella["tot_biometricos_sin_clasificar"]:
+            st.warning(
+                f"{huella['tot_biometricos_sin_clasificar']:,} registros biométricos "
+                f"({huella['pct_biometricos_sin_clasificar']}%) no pudieron clasificarse como peatonales o "
+                "vehiculares y se informan fuera de las tres tarjetas.",
+                icon=":material/warning:",
+            )
         
         c_b1, c_b2, c_b3 = st.columns(3)
         with c_b1:
             st.markdown(f"""
-<div style="background-color: #141E29; border-left: 4px solid #3B82B8; padding: 15px 20px; border-radius: 4px; font-family: sans-serif;">
-<div style="color: #A8B5C1; font-size: 12px; margin-bottom: 5px;">DÍA PICO</div>
-<div style="color: #E8EEF3; font-size: 15px; font-weight: bold;">{huella['dia_pico_str']}</div>
+<div class="peak-card peak-card--blue">
+<div class="peak-card__label">DÍA PICO</div>
+<div class="peak-card__value">{huella['dia_pico_str']}</div>
 </div>
 """, unsafe_allow_html=True)
         with c_b2:
             st.markdown(f"""
-<div style="background-color: #141E29; border-left: 4px solid #F39C12; padding: 15px 20px; border-radius: 4px; font-family: sans-serif;">
-<div style="color: #A8B5C1; font-size: 12px; margin-bottom: 5px;">HORA PICO</div>
-<div style="color: #E8EEF3; font-size: 15px; font-weight: bold;">{huella['hora_pico_str']}</div>
+<div class="peak-card peak-card--orange">
+<div class="peak-card__label">HORA PICO</div>
+<div class="peak-card__value">{huella['hora_pico_str']}</div>
 </div>
 """, unsafe_allow_html=True)
         with c_b3:
             st.markdown(f"""
-<div style="background-color: #141E29; border-left: 4px solid #1ABC9C; padding: 15px 20px; border-radius: 4px; font-family: sans-serif;">
-<div style="color: #A8B5C1; font-size: 12px; margin-bottom: 5px;">ACCESO PICO</div>
-<div style="color: #E8EEF3; font-size: 15px; font-weight: bold;">{huella['acceso_pico_str']}</div>
+<div class="peak-card peak-card--green">
+<div class="peak-card__label">ACCESO PICO</div>
+<div class="peak-card__value">{huella['acceso_pico_str']}</div>
 </div>
 """, unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
         
-        st.info("💡 **Nota:** Las categorías representan registros generados por diferentes mecanismos del sistema de control de accesos. Un mismo acceso físico puede generar más de un registro cuando intervienen simultáneamente un terminal biométrico y el reconocimiento LPR. Por esta razón, las categorías no deben sumarse automáticamente como accesos físicos independientes.")
+        st.info(
+            "Las categorías representan registros generados por diferentes mecanismos del sistema de control de accesos. "
+            "Un mismo acceso físico puede generar más de un registro cuando intervienen simultáneamente un terminal "
+            "biométrico y el reconocimiento LPR. Por esta razón, las categorías no deben sumarse automáticamente como "
+            "accesos físicos independientes.",
+            icon=":material/info:",
+        )
+
+        mostrar_seccion("Estadísticas vehiculares consolidadas")
+        st.caption(
+            "Vista comparativa de eventos de identificación. La suma consolidada no representa vehículos físicos únicos."
+        )
+
+        entradas_veh = stats_vehicular_consolidado["entradas"]
+        salidas_veh = stats_vehicular_consolidado["salidas"]
+        promedios_veh = stats_vehicular_consolidado["promedios"]
+        dias_veh = stats_vehicular_consolidado["dias"]
+
+        c_ent_bio, c_ent_lpr, c_ent_total = st.columns(3)
+        with c_ent_bio:
+            mostrar_metrica("Entradas biométrico VEH", entradas_veh["Biométrico VEH"], "person_check")
+        with c_ent_lpr:
+            mostrar_metrica("Entradas LPR", entradas_veh["LPR"], "directions_car")
+        with c_ent_total:
+            mostrar_metrica("Total de eventos de entrada", entradas_veh["Consolidado"], "login")
+
+        c_sal_bio, c_sal_lpr, c_sal_total = st.columns(3)
+        with c_sal_bio:
+            mostrar_metrica("Salidas biométrico VEH", salidas_veh["Biométrico VEH"], "person_check")
+        with c_sal_lpr:
+            mostrar_metrica("Salidas LPR", salidas_veh["LPR"], "directions_car")
+        with c_sal_total:
+            mostrar_metrica("Total de eventos de salida", salidas_veh["Consolidado"], "logout")
+
+        c_prom_bio, c_prom_lpr, c_prom_total = st.columns(3)
+        with c_prom_bio:
+            mostrar_metrica("Promedio diario biométrico VEH", round(promedios_veh["Biométrico VEH"], 2), "calendar_month")
+        with c_prom_lpr:
+            mostrar_metrica("Promedio diario LPR", round(promedios_veh["LPR"], 2), "calendar_month")
+        with c_prom_total:
+            mostrar_metrica("Promedio diario consolidado", round(promedios_veh["Consolidado"], 2), "calendar_month")
+        st.caption(
+            "Promedios: entradas de cada mecanismo divididas para sus días con datos; consolidado dividido para la unión "
+            f"de fechas con datos. Días considerados — biométrico VEH: {dias_veh['Biométrico VEH']}, "
+            f"LPR: {dias_veh['LPR']}, consolidado: {dias_veh['Consolidado']}."
+        )
+
+        diario_veh = stats_vehicular_consolidado["diario"]
+        if not diario_veh.empty:
+            st.plotly_chart(
+                lprv.grafico_entradas_vehiculares_consolidadas(
+                    diario_veh,
+                    theme="light" if obtener_tema_actual() == "Claro" else "dark",
+                ),
+                width="stretch",
+                key="grafico_entradas_vehiculares_consolidadas",
+            )
+            st.dataframe(
+                diario_veh.rename(columns={"Dia_Semana": "Día de la semana"}),
+                width="stretch",
+                hide_index=True,
+            )
+
+        ubicacion_veh = stats_vehicular_consolidado["por_ubicacion"]
+        if not ubicacion_veh.empty:
+            st.plotly_chart(
+                lprv.grafico_movimientos_vehiculares_consolidados(
+                    ubicacion_veh,
+                    theme="light" if obtener_tema_actual() == "Claro" else "dark",
+                ),
+                width="stretch",
+                key="grafico_movimientos_vehiculares_consolidados",
+            )
+            st.dataframe(
+                ubicacion_veh.rename(columns={"Ubicacion": "Ubicación"}),
+                width="stretch",
+                hide_index=True,
+            )
+
+        periodos_veh = stats_vehicular_consolidado["periodos_pico"]
+        if not periodos_veh.empty:
+            st.markdown("#### Horarios con mayor actividad vehicular")
+            st.caption(
+                "Muestra las horas del día que acumularon más eventos de identificación vehicular "
+                "durante el período seleccionado."
+            )
+            nombres_mecanismo = {
+                "Consolidado": "Todos los mecanismos",
+                "Biométrico VEH": "Biométrico VEH",
+                "LPR": "Reconocimiento LPR",
+            }
+            columnas_ranking = st.columns(3)
+            for columna, mecanismo in zip(
+                columnas_ranking, ["Consolidado", "Biométrico VEH", "LPR"]
+            ):
+                with columna:
+                    st.markdown(f"**{nombres_mecanismo[mecanismo]}**")
+                    ranking = periodos_veh.loc[
+                        periodos_veh["Mecanismo"] == mecanismo,
+                        ["Rango", "Franja", "Registros"],
+                    ].copy()
+                    ranking["Rango"] = ranking["Rango"].apply(lambda valor: f"{int(valor)}.º")
+                    ranking = ranking.rename(columns={
+                        "Rango": "Posición",
+                        "Franja": "Horario",
+                        "Registros": "Eventos registrados",
+                    })
+                    st.dataframe(ranking, width="stretch", hide_index=True)
+            st.caption(
+                "Los registros corresponden a la suma de todos los días analizados. No representan la "
+                "circulación de una sola hora o fecha. Todos los mecanismos es una suma de eventos, no de "
+                "vehículos únicos."
+            )
+
+        flujo_carril = stats_vehicular_consolidado["flujo_por_carril"]
+        if not flujo_carril.empty:
+            st.markdown("#### Actividad vehicular registrada por carril")
+            st.caption(
+                "Muestra la cantidad de eventos de identificación en cada carril y los intervalos reales "
+                "de mayor actividad durante el período seleccionado."
+            )
+            st.dataframe(
+                flujo_carril[[
+                    "Mecanismo", "Ubicacion", "Carril", "Sentido", "Eventos",
+                    "Fecha_mayor_actividad", "Hora_pico", "Eventos_hora_pico",
+                    "Promedio_hora_pico_min", "Minuto_maximo",
+                    "Maximo_observado_minuto", "Promedio_diario_sentido",
+                ]].rename(columns={
+                    "Ubicacion": "Ubicación",
+                    "Fecha_mayor_actividad": "Fecha de mayor actividad",
+                    "Hora_pico": "Hora pico real",
+                    "Eventos_hora_pico": "Eventos en hora pico",
+                    "Promedio_hora_pico_min": "Eventos/min en hora pico",
+                    "Minuto_maximo": "Minuto de máxima actividad",
+                    "Maximo_observado_minuto": "Máximo eventos/min",
+                    "Promedio_diario_sentido": "Promedio diario",
+                }).style.format({
+                    "Eventos/min en hora pico": "{:.2f}",
+                    "Promedio diario": "{:.2f}",
+                }),
+                width="stretch",
+                hide_index=True,
+            )
+            st.caption(
+                "Cada hora pico corresponde a una fecha y una hora concretas. El promedio se calcula como "
+                "eventos de ese carril en esa hora / 60 minutos. Biométrico VEH y LPR permanecen separados."
+            )
+
+        caudal_acceso = stats_vehicular_consolidado["caudal_por_acceso"]
+        if not caudal_acceso.empty:
+            st.markdown("#### Actividad simultánea de los carriles por acceso físico")
+            st.caption(
+                "El caudal indica cuántos eventos coincidieron en los carriles del mismo acceso durante "
+                "un minuto real."
+            )
+            st.dataframe(
+                caudal_acceso[[
+                    "Mecanismo", "Ubicacion", "Sentido", "Carriles", "Minuto_maximo",
+                    "Caudal_maximo_eventos_min", "Promedio_por_carril_en_minuto_maximo",
+                    "Hora_pico", "Promedio_conjunto_hora_pico_min",
+                    "Promedio_por_carril_hora_pico_min",
+                ]].rename(columns={
+                    "Ubicacion": "Ubicación",
+                    "Minuto_maximo": "Minuto simultáneo máximo",
+                    "Caudal_maximo_eventos_min": "Caudal máximo (eventos/min)",
+                    "Promedio_por_carril_en_minuto_maximo": "Promedio/carril en ese minuto",
+                    "Hora_pico": "Hora pico real",
+                    "Promedio_conjunto_hora_pico_min": "Caudal medio hora pico",
+                    "Promedio_por_carril_hora_pico_min": "Promedio/carril hora pico",
+                }).style.format({
+                    "Promedio/carril en ese minuto": "{:.2f}",
+                    "Caudal medio hora pico": "{:.2f}",
+                    "Promedio/carril hora pico": "{:.2f}",
+                }),
+                width="stretch",
+                hide_index=True,
+            )
+            st.caption(
+                "El caudal se obtiene alineando E1/E2 o S1/S2 por el mismo minuto real. No se suman "
+                "máximos ocurridos en instantes distintos. Las unidades son eventos registrados, no vehículos únicos."
+            )
+        if stats_vehicular_consolidado["direccion_no_valida"]:
+            st.warning(
+                f"{stats_vehicular_consolidado['direccion_no_valida']:,} registros vehiculares no tienen un sentido "
+                "de circulación válido y no se incluyen en entradas o salidas.",
+                icon=":material/warning:",
+            )
+        if stats_vehicular_consolidado["ubicacion_no_valida"]:
+            st.warning(
+                f"{stats_vehicular_consolidado['ubicacion_no_valida']:,} registros vehiculares no tienen una ubicación "
+                "válida y no se incluyen en el desglose por campus.",
+                icon=":material/warning:",
+            )
         
         st.markdown("---")
         
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         with c1: mostrar_metrica("Total Biométricos", tasas["total"])
         with c2: mostrar_metrica("Tasa de Éxito", f"{tasas['tasa_exito']}%")
         with c3: mostrar_metrica("Tasa de Fallo", f"{tasas['tasa_fallo_general']}%")
-        with c4: mostrar_metrica("Días Analizados", df_f["Fecha"].nunique())
+        with c4: mostrar_metrica("Otros / no clasificados", tasas["otros"])
+        with c5: mostrar_metrica("Días Analizados", df_f["Fecha"].nunique())
         
         st.markdown("<br>", unsafe_allow_html=True)
         mostrar_seccion("Conclusiones Principales (Registros Biométricos)")
@@ -1474,30 +2263,43 @@ def ejecutar_modo_todos():
         
         # 1. Comparación
         if stats_nuevas["comparacion_periodos"]:
-            st.subheader("Comparativa vs Periodo Anterior Equivalente")
+            st.subheader("Comparación con el período anterior equivalente")
+            st.caption(
+                "Compara el valor actual con un período anterior de igual duración cuando existen datos disponibles."
+            )
+            etiquetas_comparacion = {
+                "total": "Intentos biométricos",
+                "exitosos": "Autenticaciones exitosas",
+                "denegados": "Accesos denegados",
+                "fallos_rec": "Fallos de reconocimiento",
+            }
             cols_comp = st.columns(4)
             for i, (k, v) in enumerate(stats_nuevas["comparacion_periodos"].items()):
                 with cols_comp[i % 4]:
                     st.metric(
-                        label=k.capitalize().replace("_", " "), 
+                        label=etiquetas_comparacion.get(k, k.replace("_", " ").title()),
                         value=f"{v['actual']:,}", 
-                        delta=f"{v['variacion_pct']}%", 
+                        delta=(f"{v['variacion_pct']}%" if v["variacion_pct"] is not None else "N/D"),
                         delta_color="inverse" if k in ["denegados", "fallos_rec"] else "normal"
                     )
             st.markdown("---")
             
         # 2. Anomalías
-        st.subheader("Detección de Anomalías")
+        st.subheader("Situaciones estadísticas que requieren revisión")
+        st.caption(
+            "Señala concentraciones o eventos fuera de los criterios habituales definidos; no determina por sí "
+            "solo la causa de la situación."
+        )
         if stats_nuevas["anomalias_avanzadas"]:
             for anomalia in stats_nuevas["anomalias_avanzadas"]:
                 if anomalia["severidad"] == "CRITICAL":
-                    st.error(f"🚨 **{anomalia['tipo']}**: {anomalia['descripcion']} (Punto: {anomalia['punto_acceso']}) - {anomalia['magnitud']}")
+                    st.error(f"**{anomalia['tipo']}**: {anomalia['descripcion']} (Punto: {anomalia['punto_acceso']}) - {anomalia['magnitud']}", icon=":material/error:")
                 else:
-                    st.warning(f"⚠️ **{anomalia['tipo']}**: {anomalia['descripcion']} (Punto: {anomalia['punto_acceso']}) - {anomalia['magnitud']}")
+                    st.warning(f"**{anomalia['tipo']}**: {anomalia['descripcion']} (Punto: {anomalia['punto_acceso']}) - {anomalia['magnitud']}", icon=":material/warning:")
                 
                 # Check if raw data is provided
                 if "data" in anomalia and not anomalia["data"].empty:
-                    with st.expander(f"Ver lista de {anomalia['tipo']}"):
+                    with st.expander(f"Ver lista de {anomalia['tipo']}", icon=":material/visibility:"):
                         columnas_mostrar = ["Fecha", "Hora_Dia", "Persona", "Departamento", "Punto de acceso", "Resultado"]
                         # Filtran solo las columnas que existan para no romper en caso de faltantes
                         columnas = [c for c in columnas_mostrar if c in anomalia["data"].columns]
@@ -1509,12 +2311,16 @@ def ejecutar_modo_todos():
                             
                         st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
         else:
-            st.success("✅ No se detectaron anomalías severas en el periodo.")
+            st.success("No se detectaron anomalías severas en el periodo.", icon=":material/check_circle:")
             
         st.markdown("---")
             
         # 3. Top Fallos
-        st.subheader("Top 10 Usuarios Recurrentes con Fallos")
+        st.subheader("Usuarios con mayor cantidad de fallos de reconocimiento")
+        st.caption(
+            "Ordena hasta diez usuarios por fallos biométricos registrados e informa su participación dentro "
+            "del total de fallos del período."
+        )
         if not stats_nuevas["top_fallos"].empty:
             df_top = stats_nuevas["top_fallos"]
             st.dataframe(
@@ -1522,14 +2328,17 @@ def ejecutar_modo_todos():
                 use_container_width=True, hide_index=True
             )
             if df_top["Alerta"].any():
-                st.warning("⚠️ Se recomienda revisar el registro biométrico o considerar un nuevo enrolamiento para los usuarios marcados que superan el umbral de fallos.")
+                st.warning("Se recomienda revisar el registro biométrico o considerar un nuevo enrolamiento para los usuarios marcados que superan el umbral de fallos.", icon=":material/warning:")
         else:
             st.info("No hay usuarios con fallos recurrentes en este periodo.")
             
         st.markdown("---")
         
         # 4. Buscador de Personas
-        st.subheader("Buscador de Personas")
+        st.subheader("Consulta del historial de una persona")
+        st.caption(
+            "Permite revisar los eventos biométricos asociados a una persona dentro de los filtros aplicados."
+        )
         lista_personas = df_f[~df_f["Persona"].str.contains("Desconocido", case=False, na=False)]["Persona"].unique()
         lista_personas = sorted([str(p) for p in lista_personas if p])
         
@@ -1545,16 +2354,16 @@ def ejecutar_modo_todos():
             
             c_p1, c_p2, c_p3, c_p4 = st.columns(4)
             with c_p1:
-                st.metric("Total Registros", len(df_persona))
+                st.metric("Eventos biométricos registrados", len(df_persona))
             with c_p2:
                 exitosos = len(df_persona[df_persona["Resultado"] == "Exitoso"])
-                st.metric("Accesos Exitosos", exitosos)
+                st.metric("Autenticaciones exitosas", exitosos)
             with c_p3:
                 fallos = len(df_persona[df_persona["Resultado"] == "Fallo de reconocimiento"])
-                st.metric("Fallos Biométricos", fallos)
+                st.metric("Fallos de reconocimiento", fallos)
             with c_p4:
                 denegados = len(df_persona[df_persona["Resultado"] == "Denegado"])
-                st.metric("Accesos Denegados", denegados)
+                st.metric("Accesos denegados", denegados)
                 
             st.markdown(f"**Departamento:** {', '.join(df_persona['Departamento'].unique())}")
             
@@ -1569,21 +2378,22 @@ def ejecutar_modo_todos():
 
     with tab_calidad:
         mostrar_seccion("Calidad de Datos")
+        st.caption("Estos indicadores describen la integridad del archivo biométrico original, antes de aplicar filtros.")
         col_q1, col_q2, col_q3 = st.columns(3)
         with col_q1:
-            mostrar_metrica("Total Registros Originales", calidad["total_registros"])
+            mostrar_metrica("Registros originales", calidad["total_registros"])
         with col_q2:
-            mostrar_metrica("Registros Válidos", calidad["registros_validos"])
+            mostrar_metrica("Registros con fecha válida", calidad["registros_validos"])
         with col_q3:
             mostrar_metrica("Fechas Inválidas", calidad["fechas_invalidas"])
 
         col_q4, col_q5, col_q6 = st.columns(3)
         with col_q4:
-            mostrar_metrica("Puntos de Acceso Vacíos", calidad["acceso_vacio"])
+            mostrar_metrica("Registros sin punto de acceso", calidad["acceso_vacio"])
         with col_q5:
-            mostrar_metrica("Departamentos Vacíos", calidad["departamento_vacio"])
+            mostrar_metrica("Registros sin departamento", calidad["departamento_vacio"])
         with col_q6:
-            mostrar_metrica("Registros sin Nombre", calidad["registros_sin_nombre"])
+            mostrar_metrica("Registros sin nombre", calidad["registros_sin_nombre"])
 
         st.markdown("---")
         
@@ -1599,30 +2409,159 @@ def ejecutar_modo_todos():
         mostrar_seccion("Análisis Vehicular LPR")
         
         if df_lpr_valido is not None and not df_lpr_valido.empty:
-            st.info("Datos vehiculares cargados y procesados correctamente.")
+            tema_lpr = "light" if obtener_tema_actual() == "Claro" else "dark"
             
             # Estadísticas LPR
-            stats_gen_lpr = lprs.calcular_estadisticas_generales_lpr(df_lpr_f, df_lpr_duplicados, df_lpr_crudo)
+            contexto_lpr_completo = len(df_lpr_f) == len(df_lpr_valido)
+            stats_gen_lpr = lprs.calcular_estadisticas_generales_lpr(
+                df_lpr_f,
+                df_lpr_duplicados if contexto_lpr_completo else None,
+                df_lpr_crudo if contexto_lpr_completo else None,
+            )
+            resumen_entradas_lpr = lprs.resumen_entradas_vehiculares(df_lpr_f)
+            movimientos_lpr = lprs.stats_movimientos_lpr_por_ubicacion_camara(df_lpr_f)
             
             # 1. Resumen Ejecutivo Vehicular
-            st.markdown("### Resumen Ejecutivo Vehicular")
+            st.markdown("### Resumen de registros vehiculares LPR")
+            st.caption(
+                "Presenta los principales resultados del reconocimiento de matrículas dentro del contexto aplicado."
+            )
             texto_resumen = lprs.generar_texto_resumen_ejecutivo(df_lpr_f, stats_gen_lpr)
             st.info(texto_resumen)
+
+            fecha_pico_lpr = resumen_entradas_lpr["fecha_pico"]
+            dia_pico_lpr = (
+                f"{fecha_pico_lpr.strftime('%d/%m/%Y')} · {resumen_entradas_lpr['entradas_pico']:,}"
+                if fecha_pico_lpr is not None else "Sin entradas"
+            )
+            c_v1, c_v2, c_v3, c_v4 = st.columns(4)
+            with c_v1:
+                mostrar_metrica("Entradas vehiculares registradas", resumen_entradas_lpr["total_entradas"])
+            with c_v2:
+                mostrar_metrica("Promedio diario de entradas", round(resumen_entradas_lpr["promedio_diario"], 2))
+            with c_v3:
+                mostrar_metrica("Salidas vehiculares registradas", movimientos_lpr["total_salidas"])
+            with c_v4:
+                mostrar_metrica("Día de mayor ingreso", dia_pico_lpr)
+            st.caption(
+                "El promedio diario corresponde a eventos LPR de entrada depurados divididos para "
+                f"{resumen_entradas_lpr['dias_con_datos']:,} días con datos LPR dentro del período filtrado."
+            )
+
+            st.markdown("#### Cobertura de los registros LPR analizados")
+            st.caption(
+                "Resume el volumen de eventos depurados, matrículas identificadas, días con datos y "
+                "categorías de acceso presentes en los filtros aplicados."
+            )
             
             c_l1, c_l2, c_l3, c_l4 = st.columns(4)
             with c_l1:
-                mostrar_metrica("Registros LPR", stats_gen_lpr["eventos_validos"], "🚗")
+                mostrar_metrica("Registros LPR", stats_gen_lpr["eventos_validos"], "directions_car")
             with c_l2:
-                mostrar_metrica("Placas Únicas", stats_gen_lpr["placas_unicas"], "🔢")
+                mostrar_metrica("Placas únicas", stats_gen_lpr["placas_unicas"], "pin")
             with c_l3:
-                mostrar_metrica("Días Analizados", df_lpr_f["Fecha"].nunique(), "📅")
+                mostrar_metrica("Días analizados", df_lpr_f["Fecha"].nunique(), "calendar_month")
             with c_l4:
-                mostrar_metrica("Accesos", df_lpr_f["Punto_Acceso"].nunique(), "🚪")
+                mostrar_metrica("Categorías de acceso LPR", df_lpr_f["Punto_Acceso"].nunique(), "door_front")
                 
             st.markdown("---")
             
             # 2. Flujo Vehicular
             mostrar_seccion("Flujo Vehicular")
+
+            eventos_lpr_carril = lprs.consolidar_eventos_vehiculares(pd.DataFrame(), df_lpr_f)
+            flujo_lpr_carril = lprs.calcular_flujo_real_por_carril(eventos_lpr_carril)
+            caudal_lpr_acceso = lprs.calcular_caudal_conjunto_por_acceso(eventos_lpr_carril)
+            if not flujo_lpr_carril.empty:
+                carril_mayor = flujo_lpr_carril.loc[flujo_lpr_carril["Eventos"].idxmax()]
+                minuto_mayor = flujo_lpr_carril.loc[
+                    flujo_lpr_carril["Maximo_observado_minuto"].idxmax()
+                ]
+                hora_mayor = flujo_lpr_carril.loc[flujo_lpr_carril["Eventos_hora_pico"].idxmax()]
+                c_f1, c_f2, c_f3 = st.columns(3)
+                with c_f1:
+                    mostrar_metrica(
+                        "Carril con mayor circulación",
+                        f"{carril_mayor['Ubicacion']} · {carril_mayor['Carril']}",
+                    )
+                with c_f2:
+                    mostrar_metrica(
+                        "Máximo observado en un minuto",
+                        f"{int(minuto_mayor['Maximo_observado_minuto'])} eventos",
+                    )
+                with c_f3:
+                    mostrar_metrica(
+                        "Intensidad durante la hora pico",
+                        f"{hora_mayor['Promedio_hora_pico_min']:.2f} eventos/min",
+                    )
+                st.caption(
+                    f"Máximo real: {minuto_mayor['Minuto_maximo']} en "
+                    f"{minuto_mayor['Ubicacion']} · {minuto_mayor['Carril']}. "
+                    f"Hora pico real de mayor intensidad: {hora_mayor['Hora_pico']}."
+                )
+                st.markdown("#### Detalle de actividad por carril LPR")
+                st.caption(
+                    "Muestra los eventos registrados en cada carril, su hora calendario de mayor actividad "
+                    "y el mayor número observado en un minuto real."
+                )
+                st.dataframe(
+                    flujo_lpr_carril[[
+                        "Ubicacion", "Carril", "Sentido", "Eventos", "Fecha_mayor_actividad",
+                        "Hora_pico", "Eventos_hora_pico", "Promedio_hora_pico_min",
+                        "Minuto_maximo", "Maximo_observado_minuto", "Promedio_diario_sentido",
+                    ]].rename(columns={
+                        "Ubicacion": "Ubicación",
+                        "Fecha_mayor_actividad": "Fecha de mayor actividad",
+                        "Hora_pico": "Hora pico real",
+                        "Eventos_hora_pico": "Eventos hora pico",
+                        "Promedio_hora_pico_min": "Eventos/min hora pico",
+                        "Minuto_maximo": "Minuto máximo",
+                        "Maximo_observado_minuto": "Máximo eventos/min",
+                        "Promedio_diario_sentido": "Promedio diario",
+                    }).style.format({
+                        "Eventos/min hora pico": "{:.2f}", "Promedio diario": "{:.2f}",
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                if not caudal_lpr_acceso.empty:
+                    st.markdown("#### Caudal simultáneo de eventos LPR por acceso")
+                    st.caption(
+                        "Suma los eventos de los carriles del mismo sentido que coincidieron en cada minuto real."
+                    )
+                    caudal_lpr_presentacion = caudal_lpr_acceso[[
+                        "Ubicacion", "Sentido", "Carriles", "Minuto_maximo",
+                        "Caudal_maximo_eventos_min", "Promedio_por_carril_en_minuto_maximo",
+                        "Hora_pico", "Promedio_conjunto_hora_pico_min",
+                        "Promedio_por_carril_hora_pico_min",
+                    ]].rename(columns={
+                        "Ubicacion": "Ubicación",
+                        "Minuto_maximo": "Minuto de mayor caudal",
+                        "Caudal_maximo_eventos_min": "Mayor caudal (eventos por minuto)",
+                        "Promedio_por_carril_en_minuto_maximo": "Promedio por carril en ese minuto",
+                        "Hora_pico": "Hora de mayor actividad",
+                        "Promedio_conjunto_hora_pico_min": "Eventos por minuto del acceso en esa hora",
+                        "Promedio_por_carril_hora_pico_min": "Eventos por minuto y carril en esa hora",
+                    })
+                    st.dataframe(
+                        caudal_lpr_presentacion.style.format({
+                            "Promedio por carril en ese minuto": "{:.2f}",
+                            "Eventos por minuto del acceso en esa hora": "{:.2f}",
+                            "Eventos por minuto y carril en esa hora": "{:.2f}",
+                        }),
+                        use_container_width=True,
+                        hide_index=True,
+                    )
+                    st.caption(
+                        "E1/E2 o S1/S2 se alinean por minuto calendario antes de sumarse; no se combinan "
+                        "picos de momentos diferentes."
+                    )
+
+            st.markdown("#### Eventos LPR acumulados por hora del día")
+            st.caption(
+                "Compara las horas del día sumando los eventos de todas las fechas analizadas. Es una vista "
+                "acumulada y no describe la intensidad de una hora calendario concreta."
+            )
             
             df_hora_flujo = lprs.stats_flujo_vehicular_por_hora(df_lpr_f)
             
@@ -1632,43 +2571,81 @@ def ejecutar_modo_todos():
                 c_f1, c_f2, c_f3 = st.columns(3)
                 with c_f1:
                     st.markdown(f"""
-<div style="background-color: #141E29; border-left: 4px solid #E67E22; padding: 15px 20px; border-radius: 4px; font-family: sans-serif;">
-<div style="color: #A8B5C1; font-size: 12px; margin-bottom: 5px;">HORA DE MAYOR FLUJO</div>
-<div style="color: #E8EEF3; font-size: 18px; font-weight: bold;">{int(hora_max['Hora'])}:00–{(int(hora_max['Hora'])+1)%24}:00</div>
+<div class="peak-card peak-card--orange peak-card--large">
+<div class="peak-card__label">HORARIO CON MÁS EVENTOS ACUMULADOS</div>
+<div class="peak-card__value">{int(hora_max['Hora'])}:00–{(int(hora_max['Hora'])+1)%24}:00</div>
 </div>
 """, unsafe_allow_html=True)
                 with c_f2:
                     st.markdown(f"""
-<div style="background-color: #141E29; border-left: 4px solid #3B82B8; padding: 15px 20px; border-radius: 4px; font-family: sans-serif;">
-<div style="color: #A8B5C1; font-size: 12px; margin-bottom: 5px;">CANTIDAD DE REGISTROS</div>
-<div style="color: #E8EEF3; font-size: 18px; font-weight: bold;">{int(hora_max['Registros']):,}</div>
+<div class="peak-card peak-card--blue peak-card--large">
+<div class="peak-card__label">EVENTOS LPR ACUMULADOS</div>
+<div class="peak-card__value">{int(hora_max['Registros']):,}</div>
 </div>
 """, unsafe_allow_html=True)
                 with c_f3:
                     st.markdown(f"""
-<div style="background-color: #141E29; border-left: 4px solid #1ABC9C; padding: 15px 20px; border-radius: 4px; font-family: sans-serif;">
-<div style="color: #A8B5C1; font-size: 12px; margin-bottom: 5px;">INTENSIDAD PROMEDIO</div>
-<div style="color: #E8EEF3; font-size: 18px; font-weight: bold;">≈ {hora_max['Registros_por_minuto']} reg/min</div>
+<div class="peak-card peak-card--green peak-card--large">
+<div class="peak-card__label">MÁXIMO REAL EN UN MINUTO</div>
+<div class="peak-card__value">{int(hora_max['Maximo_real_por_minuto'])} eventos</div>
 </div>
 """, unsafe_allow_html=True)
+
+                st.caption(
+                    f"Cálculo: registros acumulados / ({int(hora_max['Dias_considerados'])} días con datos × 60 minutos). "
+                    f"Promedio acumulado secundario: {hora_max['Promedio_registros_minuto']} eventos/minuto de franja; "
+                    f"promedio diario de la franja: {hora_max['Promedio_por_dia']}. Los días completamente ausentes "
+                    "del archivo no se infieren."
+                )
                 
                 st.markdown("<br><br>", unsafe_allow_html=True)
-                st.plotly_chart(lprv.grafico_flujo_vehicular_por_hora(df_hora_flujo, theme="dark"), use_container_width=True, key='grafico_flujo_vehicular_por_hora_1651')
+                st.plotly_chart(lprv.grafico_flujo_vehicular_por_hora(df_hora_flujo, theme=tema_lpr), use_container_width=True, key='grafico_flujo_vehicular_por_hora_1651')
                 st.markdown("<br><br>", unsafe_allow_html=True)
                 
                 # Ranking de Horas
                 df_top_horas = lprs.stats_flujo_vehicular_top_periodos(df_lpr_f)
                 mostrar_seccion("Períodos de mayor flujo")
-                st.dataframe(df_top_horas[["Franja", "Registros", "Registros_por_minuto"]].rename(columns={"Registros_por_minuto": "Reg/Minuto"}), use_container_width=True, hide_index=True)
+                df_top_horas_presentacion = df_top_horas[[
+                    "Franja", "Registros", "Dias_considerados", "Promedio_por_dia",
+                    "Promedio_registros_minuto", "Maximo_real_por_minuto",
+                ]].copy()
+                df_top_horas_presentacion.insert(
+                    0, "Posición", [f"{posición}.º" for posición in range(1, len(df_top_horas_presentacion) + 1)]
+                )
+                st.dataframe(
+                    df_top_horas_presentacion.rename(columns={
+                        "Franja": "Horario",
+                        "Registros": "Eventos registrados",
+                        "Dias_considerados": "Días con datos",
+                        "Promedio_por_dia": "Promedio/día de la franja",
+                        "Promedio_registros_minuto": "Promedio acumulado/minuto",
+                        "Maximo_real_por_minuto": "Máximo real en un minuto",
+                    }),
+                    use_container_width=True,
+                    hide_index=True,
+                )
                 st.markdown("<br><br>", unsafe_allow_html=True)
 
-            mostrar_seccion("Actividad vehicular en el tiempo")
+            mostrar_seccion("Entradas vehiculares registradas por día")
+            df_entradas_dia = resumen_entradas_lpr["diario"]
+            st.plotly_chart(
+                lprv.grafico_entradas_vehiculares_por_dia(df_entradas_dia, theme=tema_lpr),
+                use_container_width=True,
+                key="grafico_entradas_vehiculares_diarias_lpr",
+            )
+            st.dataframe(
+                df_entradas_dia.rename(columns={"Dia_Semana": "Día de la semana"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            mostrar_seccion("Actividad vehicular total en el tiempo")
             df_dia = lprs.stats_eventos_por_dia(df_lpr_f)
-            st.plotly_chart(lprv.grafico_lpr_por_dia(df_dia, theme="dark"), use_container_width=True, key='grafico_lpr_por_dia_1662')
+            st.plotly_chart(lprv.grafico_lpr_por_dia(df_dia, theme=tema_lpr), use_container_width=True, key='grafico_lpr_por_dia_1662')
             st.markdown("<br><br>", unsafe_allow_html=True)
                 
             df_heatmap = lprs.stats_heatmap_dia_hora(df_lpr_f)
-            st.plotly_chart(lprv.grafico_heatmap_lpr(df_heatmap, theme="dark"), use_container_width=True, key='grafico_heatmap_lpr_1666')
+            st.plotly_chart(lprv.grafico_heatmap_lpr(df_heatmap, theme=tema_lpr), use_container_width=True, key='grafico_heatmap_lpr_1666')
             
             st.markdown("---")
             
@@ -1676,23 +2653,97 @@ def ejecutar_modo_todos():
             mostrar_seccion("Flujo por acceso")
             df_flujo_acceso = lprs.stats_flujo_vehicular_por_acceso(df_lpr_f)
             if not df_flujo_acceso.empty:
-                st.dataframe(df_flujo_acceso.rename(columns={"Registros_por_minuto": "Reg/Minuto", "Hora_Pico": "Hora Pico"}), use_container_width=True, hide_index=True)
+                st.dataframe(df_flujo_acceso.rename(columns={
+                    "Hora_Pico": "Hora Pico",
+                    "Dias_considerados": "Días con datos",
+                    "Promedio_registros_minuto": "Promedio/minuto de franja",
+                    "Promedio_por_dia": "Promedio/día de la franja",
+                    "Maximo_real_por_minuto": "Máximo real en un minuto",
+                }), use_container_width=True, hide_index=True)
                 st.markdown("<br><br>", unsafe_allow_html=True)
             
-            df_lpr_sitio = lprs.stats_lpr_por_sitio(df_lpr_f)
-            st.plotly_chart(lprv.grafico_lpr_por_sitio(df_lpr_sitio, theme="dark"), use_container_width=True, key='grafico_lpr_por_sitio_1678')
+            mostrar_seccion("Entradas y salidas LPR por ubicación")
+            df_mov_ubicacion = movimientos_lpr["por_ubicacion"]
+
+            def conteo_movimiento(ubicacion, sentido):
+                filas = df_mov_ubicacion[
+                    (df_mov_ubicacion["Ubicacion"] == ubicacion)
+                    & (df_mov_ubicacion["Sentido"] == sentido)
+                ]
+                return int(filas["Registros"].sum())
+
+            c_u1, c_u2, c_u3, c_u4 = st.columns(4)
+            with c_u1:
+                mostrar_metrica("Entradas 25 de Junio", conteo_movimiento("25 de Junio", "Entrada"))
+            with c_u2:
+                mostrar_metrica("Salidas 25 de Junio", conteo_movimiento("25 de Junio", "Salida"))
+            with c_u3:
+                mostrar_metrica("Entradas Ferroviaria", conteo_movimiento("Ferroviaria", "Entrada"))
+            with c_u4:
+                mostrar_metrica("Salidas Ferroviaria", conteo_movimiento("Ferroviaria", "Salida"))
+
+            st.plotly_chart(
+                lprv.grafico_entradas_salidas_por_ubicacion(df_mov_ubicacion, theme=tema_lpr),
+                use_container_width=True,
+                key="grafico_movimientos_lpr_por_ubicacion",
+            )
+
+            st.markdown("#### Eventos LPR por cámara de acceso")
+            st.caption(
+                "Detalla la ubicación, el sentido de circulación y los eventos registrados por cada cámara."
+            )
+            st.dataframe(
+                movimientos_lpr["por_camara"].rename(
+                    columns={
+                        "Ubicacion": "Ubicación",
+                        "Camara": "Cámara de acceso",
+                        "Registros": "Eventos registrados",
+                    }
+                ),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            suma_ent_ubic = int(df_mov_ubicacion.loc[df_mov_ubicacion["Sentido"] == "Entrada", "Registros"].sum())
+            suma_sal_ubic = int(df_mov_ubicacion.loc[df_mov_ubicacion["Sentido"] == "Salida", "Registros"].sum())
+            df_mov_camara = movimientos_lpr["por_camara"]
+            suma_ent_camara = int(df_mov_camara.loc[df_mov_camara["Sentido"] == "Entrada", "Registros"].sum())
+            suma_sal_camara = int(df_mov_camara.loc[df_mov_camara["Sentido"] == "Salida", "Registros"].sum())
+            st.caption(
+                "Conciliación: entradas "
+                f"{movimientos_lpr['total_entradas']:,} total / {suma_ent_ubic:,} por ubicación / {suma_ent_camara:,} por cámara; "
+                "salidas "
+                f"{movimientos_lpr['total_salidas']:,} total / {suma_sal_ubic:,} por ubicación / {suma_sal_camara:,} por cámara."
+            )
+            diferencias_lpr = movimientos_lpr["diferencias"]
+            if any(diferencias_lpr.values()):
+                st.warning(
+                    "Registros fuera del desglose válido: "
+                    f"{diferencias_lpr['entradas_sin_ubicacion_valida']} entradas y "
+                    f"{diferencias_lpr['salidas_sin_ubicacion_valida']} salidas sin ubicación válida; "
+                    f"{diferencias_lpr['entradas_sin_camara_valida']} entradas y "
+                    f"{diferencias_lpr['salidas_sin_camara_valida']} salidas sin cámara válida; "
+                    f"{diferencias_lpr['direccion_no_valida']} registros sin dirección válida."
+                )
             
             st.markdown("---")
             
             # 4. Placas con mayor frecuencia
             mostrar_seccion("Placas con mayor frecuencia")
-            sel_top = st.selectbox("Seleccionar cantidad a visualizar:", [5, 10, 20], index=1, key="lpr_top_sel")
+            sel_top = st.selectbox("Cantidad de matrículas que se mostrarán", [5, 10, 20], index=1, key="lpr_top_sel")
             df_top = lprs.stats_lpr_top_placas(df_lpr_f, sel_top)
             
-            st.dataframe(df_top, use_container_width=True, hide_index=True)
-            st.metric("Promedio eventos/placa", round(stats_gen_lpr["eventos_validos"] / max(1, stats_gen_lpr["placas_unicas"]), 1))
+            st.dataframe(
+                df_top.rename(columns={"Eventos": "Eventos LPR registrados"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+            st.metric(
+                "Promedio de eventos LPR por matrícula identificada",
+                round(stats_gen_lpr["eventos_validos"] / max(1, stats_gen_lpr["placas_unicas"]), 1),
+            )
             st.markdown("<br><br>", unsafe_allow_html=True)
-            st.plotly_chart(lprv.grafico_top_placas(df_top, theme="dark"), use_container_width=True, key='grafico_top_placas_1690')
+            st.plotly_chart(lprv.grafico_top_placas(df_top, theme=tema_lpr), use_container_width=True, key='grafico_top_placas_1690')
                 
 
                 
@@ -1705,9 +2756,9 @@ def ejecutar_modo_todos():
     # Generar PDF
     with st.sidebar:
         st.markdown("---")
-        st.markdown("## <i class='bi bi-download'></i> Exportar Reporte", unsafe_allow_html=True)
-        if st.button("Generar Mega Reporte PDF", key="btn_pdf_todos", use_container_width=True):
-            with st.spinner("Generando mega reporte (puede tardar unos segundos)..."):
+        st.markdown("## :material/download: Exportar reporte")
+        if st.button("Generar reporte PDF", icon=":material/picture_as_pdf:", key="btn_pdf_todos", use_container_width=True):
+            with st.spinner("Generando reporte (puede tardar unos segundos)..."):
                 try:
                     # Preparar variables LPR para PDF si existen
                     pdf_stats_gen_lpr = None
@@ -1716,15 +2767,21 @@ def ejecutar_modo_todos():
                     pdf_conclusiones_lpr = []
                     
                     if df_lpr_valido is not None and not df_lpr_valido.empty:
-                        pdf_stats_gen_lpr = lprs.calcular_estadisticas_generales_lpr(df_lpr_f, df_lpr_duplicados, df_lpr_crudo)
+                        contexto_lpr_completo = len(df_lpr_f) == len(df_lpr_valido)
+                        pdf_stats_gen_lpr = lprs.calcular_estadisticas_generales_lpr(
+                            df_lpr_f,
+                            df_lpr_duplicados if contexto_lpr_completo else None,
+                            df_lpr_crudo if contexto_lpr_completo else None,
+                        )
                         pdf_df_lpr_f = df_lpr_f
                         pdf_conclusiones_lpr = lprs.generar_conclusiones_lpr(pdf_stats_gen_lpr, pdf_df_lpr_f)
 
                     pdf_buffer = exportar_reporte_integral_pdf(df_consolidado_total, tasas, stats_base, stats_nuevas, conclusiones, calidad, pdf_stats_gen_lpr, pdf_df_lpr_f, pdf_conclusiones_lpr, huella_dashboard=huella)
                     st.download_button(
                         label="Descargar PDF",
+                        icon=":material/download:",
                         data=pdf_buffer,
-                        file_name=f"Mega_Reporte_Integral_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                        file_name=f"Reporte_Integral_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                         mime="application/pdf",
                         use_container_width=True,
                         key="dl_pdf_todos"
@@ -1738,7 +2795,7 @@ def ejecutar_modo_todos():
 # ═════════════════════════════════════════════════════════════════════════════
 
 def main():
-    st.sidebar.markdown("## <i class='bi bi-bar-chart'></i> Análisis", unsafe_allow_html=True)
+    st.sidebar.markdown("## :material/analytics: Análisis")
     modo = st.sidebar.radio(
         "Seleccione el tipo de análisis:",
         # options=["Eventos Normales", "Eventos Anormales", "Todos los Eventos"],
@@ -1756,6 +2813,8 @@ def main():
         ejecutar_modo_todos()
 
 def app_protegida():
+    configurar_tema_interfaz()
+
     import streamlit_authenticator as stauth
     import yaml
     from yaml.loader import SafeLoader

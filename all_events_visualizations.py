@@ -19,7 +19,7 @@ def grafico_resultados_generales(df_stats: pd.DataFrame) -> go.Figure:
         color_discrete_map=COLORES_RESULTADO,
         hole=0.4
     )
-    _aplicar_layout(fig, "Distribución General de Eventos")
+    _aplicar_layout(fig, "Resultados de autenticación biométrica")
     fig.update_traces(textinfo="percent+label")
     return fig
 
@@ -36,11 +36,11 @@ def grafico_cruce_ingreso_resultado(df_cruce: pd.DataFrame) -> go.Figure:
                 marker_color=COLORES_RESULTADO[res]
             ))
             
-    _aplicar_layout(fig, "Eventos por Ingreso y Resultado")
+    _aplicar_layout(fig, "Resultados biométricos por categoría de ingreso")
     fig.update_layout(
         barmode='stack',
-        xaxis_title="Ingreso",
-        yaxis_title="Cantidad de Eventos"
+        xaxis_title="Categoría de ingreso",
+        yaxis_title="Eventos registrados"
     )
     return fig
 
@@ -57,7 +57,7 @@ def grafico_cruce_hora_resultado(df_cruce: pd.DataFrame) -> go.Figure:
                 line=dict(color=COLORES_RESULTADO[res], width=2)
             ))
             
-    _aplicar_layout(fig, "Flujo Horario por Resultado")
+    _aplicar_layout(fig, "Resultados biométricos por hora del día")
     fig.update_layout(
         xaxis_title="Hora del Día", 
         yaxis_title="Eventos"
@@ -77,7 +77,7 @@ def grafico_evolucion_resultado(df_cruce: pd.DataFrame) -> go.Figure:
                 marker_color=COLORES_RESULTADO[res]
             ))
             
-    _aplicar_layout(fig, "Evolución Diaria por Resultado")
+    _aplicar_layout(fig, "Evolución diaria de resultados biométricos")
     fig.update_layout(
         barmode='stack',
         xaxis_title="Fecha",
@@ -145,11 +145,11 @@ def grafico_punto_acceso_resultado(df_cruce: pd.DataFrame) -> go.Figure:
                 marker_color=COLORES_RESULTADO[res]
             ))
             
-    _aplicar_layout(fig, "Top 15 Puntos de Acceso por Flujo (Apilado)", height=max(400, len(df_top)*35))
+    _aplicar_layout(fig, "Quince puntos de acceso con más eventos, por resultado", height=max(400, len(df_top)*35))
     fig.update_layout(
         barmode='stack',
         xaxis_title="Eventos",
-        yaxis_title="Punto de Acceso"
+        yaxis_title="Punto de acceso"
     )
     fig.update_yaxes(categoryorder="total ascending")
     return fig
@@ -168,11 +168,11 @@ def grafico_device_resultado(df_cruce: pd.DataFrame) -> go.Figure:
                 marker_color=COLORES_RESULTADO[res]
             ))
             
-    _aplicar_layout(fig, "Top 15 Dispositivos por Flujo (Apilado)", height=max(400, len(df_top)*35))
+    _aplicar_layout(fig, "Quince dispositivos con más eventos, por resultado", height=max(400, len(df_top)*35))
     fig.update_layout(
         barmode='stack',
         xaxis_title="Eventos",
-        yaxis_title="Dispositivo (Device Name)"
+        yaxis_title="Dispositivo"
     )
     fig.update_yaxes(categoryorder="total ascending")
     return fig

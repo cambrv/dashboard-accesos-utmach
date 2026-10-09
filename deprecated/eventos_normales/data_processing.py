@@ -16,11 +16,7 @@ from config import (
     DIAS_SEMANA_MAP,
     FORMATO_INTERVALO,
 )
-from access_names import (
-    clasificar_acceso_funcional,
-    obtener_clasificacion_completa,
-    clasificar_carril_vehicular,
-)
+from access_names import clasificar_acceso_funcional, obtener_clasificacion_completa
 
 
 @st.cache_data(show_spinner="Procesando datos...")
@@ -73,15 +69,6 @@ def procesar_datos(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
 
     # ─── 5. Determinar Movimiento (Entrada/Salida/Otro) ─────────────────
     df["Movimiento"] = df["Punto de acceso"].apply(_clasificar_movimiento)
-
-    carriles = df.apply(
-        lambda fila: clasificar_carril_vehicular(
-            fila["Punto de acceso"], fila["Ubicacion_Ingreso"], fila["Movimiento"]
-        ),
-        axis=1,
-    )
-    df["Carril"] = carriles.apply(lambda x: x["Carril"])
-    df["Carril_ID"] = carriles.apply(lambda x: x["Carril_ID"])
 
     # ─── 6. Crear identificador de persona ──────────────────────────────
     df["Persona"] = (

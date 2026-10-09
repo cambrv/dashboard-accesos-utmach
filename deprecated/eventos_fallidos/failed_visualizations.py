@@ -16,7 +16,7 @@ def grafico_fallos_por_ingreso(df_stats: pd.DataFrame) -> go.Figure:
         color_discrete_map=COLORES_INGRESO,
         hole=0.4
     )
-    _aplicar_layout(fig, "Eventos anormales por categoría de ingreso")
+    _aplicar_layout(fig, "Eventos Fallidos por Ingreso")
     fig.update_traces(textinfo="percent+label")
     return fig
 
@@ -29,8 +29,8 @@ def grafico_fallos_por_hora(df_stats: pd.DataFrame) -> go.Figure:
         line_shape="spline",
         color_discrete_sequence=[PALETA_PRINCIPAL[1]]
     )
-    _aplicar_layout(fig, "Eventos anormales por hora del día")
-    fig.update_layout(xaxis_title="Hora del día", yaxis_title="Eventos anormales registrados")
+    _aplicar_layout(fig, "Eventos Fallidos por Hora")
+    fig.update_layout(xaxis_title="Hora del Día", yaxis_title="Eventos")
     fig.update_xaxes(tickmode="linear", tick0=0, dtick=1)
     return fig
 
@@ -42,8 +42,8 @@ def grafico_fallos_evolucion_diaria(df_stats: pd.DataFrame) -> go.Figure:
         text="Eventos",
         color_discrete_sequence=[PALETA_PRINCIPAL[0]]
     )
-    _aplicar_layout(fig, "Evolución diaria de eventos anormales")
-    fig.update_layout(xaxis_title="Fecha", yaxis_title="Eventos anormales registrados")
+    _aplicar_layout(fig, "Evolución Diaria de Eventos Fallidos")
+    fig.update_layout(xaxis_title="Fecha", yaxis_title="Eventos")
     fig.update_traces(textposition="outside")
     return fig
 
@@ -63,6 +63,6 @@ def grafico_fallos_por_punto(df_stats: pd.DataFrame) -> go.Figure:
         color_discrete_sequence=[PALETA_PRINCIPAL[2]]
     )
     fig.update_yaxes(categoryorder="total ascending")
-    _aplicar_layout(fig, "Quince puntos de acceso con más eventos anormales", height=max(400, len(df_plot)*35))
-    fig.update_layout(xaxis_title="Eventos anormales registrados", yaxis_title="Punto de acceso")
+    _aplicar_layout(fig, "Top 15 Puntos con Más Fallos", height=max(400, len(df_plot)*35))
+    fig.update_layout(xaxis_title="Eventos", yaxis_title="Punto de Acceso")
     return fig

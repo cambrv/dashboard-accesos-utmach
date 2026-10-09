@@ -1,3 +1,5 @@
+import re
+
 import pandas as pd
 
 NOMBRES_PUNTOS_ACCESO = {
@@ -135,6 +137,60 @@ def clasificar_acceso_funcional(nombre, es_lpr=False):
     """
     res = obtener_clasificacion_completa(nombre, es_lpr)
     return res["Categoria_Ingreso"]
+
+
+def clasificar_carril_vehicular(nombre, ubicacion=None, movimiento=None):
+    """Identifica E1/E2/S1/S2 sin mezclar ubicaciones ni torniquetes."""
+    ubicacion_valida = ubicacion if ubicacion in {"25 de Junio", "Ferroviaria"} else "Error de clasificación"
+    movimiento_normalizado = str(movimiento).upper()
+    sentido = movimiento_normalizado if movimiento_normalizado in {"ENTRADA", "SALIDA"} else "OTRO"
+    resultado = {
+        "Ubicacion": ubicacion_valida,
+        "Sentido": sentido,
+        "Carril": "Sin clasificar",
+        "Carril_ID": "Sin clasificar",
+    }
+    if pd.isna(nombre) or nombre is None:
+        return resultado
+
+    texto = re.sub(r"[_\-]+", " ", str(nombre).upper())
+    texto = re.sub(r"\s+", " ", texto).strip()
+    if not texto or texto in {"NAN", "NONE", "DESCONOCIDO", "DESCONOCIDA"}:
+        return resultado
+
+    if resultado["Ubicacion"] == "Error de clasificación":
+        if re.search(r"\bFER(?:ROV(?:IARIA)?)?\b", texto) or "FERROV" in texto:
+            resultado["Ubicacion"] = "Ferroviaria"
+        elif re.search(r"\b25\s*(?:DE\s*)?JUN(?:IO)?\b", texto) or "25JUN" in texto.replace(" ", ""):
+            resultado["Ubicacion"] = "25 de Junio"
+        elif "VEH" in texto:
+            # Convención ya usada por la clasificación biométrica existente.
+            resultado["Ubicacion"] = "25 de Junio"
+
+    entrada = bool(re.search(r"\b(?:ING|INGRESO|ENT|ENTRADA)\b", texto))
+    salida = bool(re.search(r"\b(?:SAL|SALIDA)\b", texto))
+    if entrada and not salida:
+        resultado["Sentido"] = "ENTRADA"
+    elif salida and not entrada:
+        resultado["Sentido"] = "SALIDA"
+
+    # Exige la marca VEH para que TOR 1/TOR 2 nunca se conviertan en carriles.
+    if "VEH" not in texto:
+        return resultado
+
+    coincidencia = re.search(
+        r"(?:\b(?:ING|INGRESO|ENT|ENTRADA|SAL|SALIDA)\b\s+(?:VEH\s+)?([12])\b)"
+        r"|(?:\bVEH\b\s+(?:\b(?:ING|INGRESO|ENT|ENTRADA|SAL|SALIDA)\b\s+)?([12])\b)",
+        texto,
+    )
+    if not coincidencia or resultado["Sentido"] not in {"ENTRADA", "SALIDA"}:
+        return resultado
+
+    numero = next(grupo for grupo in coincidencia.groups() if grupo)
+    prefijo = "E" if resultado["Sentido"] == "ENTRADA" else "S"
+    resultado["Carril"] = f"{prefijo}{numero}"
+    resultado["Carril_ID"] = f"{resultado['Ubicacion']} · {prefijo}{numero}"
+    return resultado
 
 def obtener_clasificacion_completa(nombre, es_lpr=False):
     """

@@ -6,16 +6,15 @@ from config import DIAS_SEMANA_MAP, RESULTADO_EXITOSO, RESULTADO_DENEGADO, RESUL
 
 def calcular_tasas_generales(df: pd.DataFrame) -> dict:
     total = len(df)
-    if total == 0:
-        return {}
-    
-    conteo = df["Resultado"].value_counts()
+    conteo = df["Resultado"].value_counts() if total and "Resultado" in df.columns else pd.Series(dtype="int64")
     exitosos = conteo.get(RESULTADO_EXITOSO, 0)
     denegados = conteo.get(RESULTADO_DENEGADO, 0)
     fallos_rec = conteo.get(RESULTADO_FALLO_RECONOCIMIENTO, 0)
     otros = conteo.get(RESULTADO_OTRO, 0)
     
-    fallidos_totales = denegados + fallos_rec + otros
+    # "Otro" expresa un resultado no clasificado; no hay base para declararlo
+    # fallo. Se informa por separado y las tres tasas suman 100 %.
+    fallidos_totales = denegados + fallos_rec
     
     return {
         "total": total,
@@ -24,10 +23,11 @@ def calcular_tasas_generales(df: pd.DataFrame) -> dict:
         "denegados": denegados,
         "fallos_rec": fallos_rec,
         "otros": otros,
-        "tasa_exito": round((exitosos / total) * 100, 2),
-        "tasa_fallo_general": round((fallidos_totales / total) * 100, 2),
-        "tasa_denegacion": round((denegados / total) * 100, 2),
-        "tasa_fallo_rec": round((fallos_rec / total) * 100, 2)
+        "tasa_exito": round((exitosos / total) * 100, 2) if total else 0.0,
+        "tasa_fallo_general": round((fallidos_totales / total) * 100, 2) if total else 0.0,
+        "tasa_denegacion": round((denegados / total) * 100, 2) if total else 0.0,
+        "tasa_fallo_rec": round((fallos_rec / total) * 100, 2) if total else 0.0,
+        "tasa_otros": round((otros / total) * 100, 2) if total else 0.0,
     }
 
 def stats_resultados(df: pd.DataFrame) -> pd.DataFrame:
@@ -49,7 +49,7 @@ def stats_cruce_ingreso_resultado(df: pd.DataFrame) -> pd.DataFrame:
         if col not in cruce.columns:
             cruce[col] = 0
             
-    cruce["Tasa_Fallo"] = ((cruce["Total"] - cruce[RESULTADO_EXITOSO]) / cruce["Total"] * 100).round(2)
+    cruce["Tasa_Fallo"] = ((cruce[RESULTADO_DENEGADO] + cruce[RESULTADO_FALLO_RECONOCIMIENTO]) / cruce["Total"] * 100).round(2)
     return cruce.sort_values("Total", ascending=False)
 
 def stats_cruce_hora_resultado(df: pd.DataFrame) -> pd.DataFrame:
@@ -63,7 +63,7 @@ def stats_cruce_hora_resultado(df: pd.DataFrame) -> pd.DataFrame:
         if col not in cruce.columns:
             cruce[col] = 0
             
-    cruce["Tasa_Fallo"] = ((cruce["Total"] - cruce[RESULTADO_EXITOSO]) / cruce["Total"] * 100).round(2)
+    cruce["Tasa_Fallo"] = ((cruce[RESULTADO_DENEGADO] + cruce[RESULTADO_FALLO_RECONOCIMIENTO]) / cruce["Total"] * 100).round(2)
     return cruce
 
 def stats_evolucion_resultado(df: pd.DataFrame) -> pd.DataFrame:
@@ -102,7 +102,7 @@ def stats_tipo_usuario_resultado(df: pd.DataFrame) -> pd.DataFrame:
     for col in [RESULTADO_EXITOSO, RESULTADO_DENEGADO, RESULTADO_FALLO_RECONOCIMIENTO, RESULTADO_OTRO]:
         if col not in cruce.columns:
             cruce[col] = 0
-    cruce["Tasa_Fallo"] = ((cruce["Total"] - cruce[RESULTADO_EXITOSO]) / cruce["Total"] * 100).round(2)
+    cruce["Tasa_Fallo"] = ((cruce[RESULTADO_DENEGADO] + cruce[RESULTADO_FALLO_RECONOCIMIENTO]) / cruce["Total"] * 100).round(2)
     return cruce.sort_values("Total", ascending=False)
 
 def stats_punto_acceso_resultado(df: pd.DataFrame) -> pd.DataFrame:
@@ -113,7 +113,7 @@ def stats_punto_acceso_resultado(df: pd.DataFrame) -> pd.DataFrame:
     for col in [RESULTADO_EXITOSO, RESULTADO_DENEGADO, RESULTADO_FALLO_RECONOCIMIENTO, RESULTADO_OTRO]:
         if col not in cruce.columns:
             cruce[col] = 0
-    cruce["Tasa_Fallo"] = ((cruce["Total"] - cruce[RESULTADO_EXITOSO]) / cruce["Total"] * 100).round(2)
+    cruce["Tasa_Fallo"] = ((cruce[RESULTADO_DENEGADO] + cruce[RESULTADO_FALLO_RECONOCIMIENTO]) / cruce["Total"] * 100).round(2)
     return cruce.sort_values("Total", ascending=False)
 
 def stats_device_resultado(df: pd.DataFrame) -> pd.DataFrame:
@@ -124,7 +124,7 @@ def stats_device_resultado(df: pd.DataFrame) -> pd.DataFrame:
     for col in [RESULTADO_EXITOSO, RESULTADO_DENEGADO, RESULTADO_FALLO_RECONOCIMIENTO, RESULTADO_OTRO]:
         if col not in cruce.columns:
             cruce[col] = 0
-    cruce["Tasa_Fallo"] = ((cruce["Total"] - cruce[RESULTADO_EXITOSO]) / cruce["Total"] * 100).round(2)
+    cruce["Tasa_Fallo"] = ((cruce[RESULTADO_DENEGADO] + cruce[RESULTADO_FALLO_RECONOCIMIENTO]) / cruce["Total"] * 100).round(2)
     return cruce.sort_values("Total", ascending=False)
 
 def stats_heatmap_dia_hora(df: pd.DataFrame) -> pd.DataFrame:
@@ -222,8 +222,13 @@ def calcular_top_usuarios_fallos(df: pd.DataFrame, umbral_fallos: int = 5, umbra
     if total_fallos_periodo == 0:
         return pd.DataFrame()
         
-    # Agrupar por persona y departamento
-    conteo = df_fallos.groupby(["Persona", "Departamento"]).agg(
+    # La tarjeta es el identificador estable cuando el export la contiene;
+    # el nombre se conserva únicamente como etiqueta legible.
+    identidad = "Persona_Analitica" if "Persona_Analitica" in df_fallos.columns else "Persona"
+    columnas_grupo = ["Persona", "Departamento"]
+    if identidad != "Persona":
+        columnas_grupo.insert(0, identidad)
+    conteo = df_fallos.groupby(columnas_grupo, dropna=False).agg(
         Cantidad_Fallos=("Resultado", "count"),
         Puntos_Acceso=("Punto de acceso", lambda x: ", ".join(x.unique()[:3])) # Hasta 3 puntos
     ).reset_index()
@@ -245,7 +250,8 @@ def comparar_periodos(df_actual: pd.DataFrame, df_anterior: pd.DataFrame) -> dic
     
     def _calc_variacion(val_act, val_ant):
         if val_ant == 0:
-            return None if val_act == 0 else 100.0 # infinito o 100% como representación visual
+            # Un crecimiento desde cero no tiene variación porcentual finita.
+            return None
         return round(((val_act - val_ant) / val_ant) * 100, 2)
         
     comparacion = {}
@@ -281,7 +287,7 @@ def detectar_anomalias_avanzadas(df: pd.DataFrame) -> list:
             "fecha_hora": "23:00 - 05:00",
             "punto_acceso": "Varios" if df_nocturno["Punto de acceso"].nunique() > 1 else df_nocturno["Punto de acceso"].iloc[0],
             "magnitud": f"{total_nocturnos} eventos",
-            "referencia": "Se esperaban 0",
+            "referencia": "Umbral heurístico 23:00–05:00",
             "severidad": "WARNING",
             "descripcion": "Se registraron eventos de acceso en horarios no habituales.",
             "data": df_nocturno
@@ -303,7 +309,7 @@ def detectar_anomalias_avanzadas(df: pd.DataFrame) -> list:
                 "magnitud": f"{top_valor} fallos ({int(pct*100)}%)",
                 "referencia": "< 50%",
                 "severidad": "CRITICAL",
-                "descripcion": "Posible daño en el sensor biométrico de este torniquete."
+                "descripcion": "Concentración estadística que requiere revisión; por sí sola no demuestra una falla del sensor."
             })
             
     return anomalias

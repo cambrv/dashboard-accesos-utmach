@@ -5,9 +5,9 @@ import pandas as pd
 import streamlit as st
 from excel_processor import leer_excel_centralizado
 
-@st.cache_data(max_entries=1, ttl=1800, show_spinner="Cargando archivo de eventos vehiculares...")
-def cargar_excel_lpr(archivo) -> pd.DataFrame:
-    """Carga el archivo subido en memoria."""
+@st.cache_data(max_entries=2, ttl=1800, show_spinner=False)
+def cargar_excel_lpr(archivo, session_scope: str = "legacy") -> pd.DataFrame:
+    """Carga el archivo subido en memoria con una clave aislada por sesión."""
     return leer_excel_centralizado(archivo, es_lpr=True)
 
 def detectar_columnas_lpr(df: pd.DataFrame) -> dict:

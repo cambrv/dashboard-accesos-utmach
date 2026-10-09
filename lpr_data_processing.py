@@ -3,13 +3,37 @@ Procesamiento, limpieza y deduplicación de datos vehiculares (LPR).
 """
 import pandas as pd
 import numpy as np
+import re
 from config import (
     INGRESO_FERROVIARIA_KEYWORD, INGRESO_FERROVIARIA,
     INGRESO_25_JUNIO, PATRONES_25_JUNIO, INGRESO_NO_CLASIFICADO,
     LPR_KEYWORDS_CAMARA, LPR_DIRECCION_ENTRADA, LPR_DIRECCION_SALIDA, LPR_DIRECCION_OTRA,
     DIAS_SEMANA_MAP, FORMATO_INTERVALO
 )
-from access_names import clasificar_acceso_funcional, obtener_clasificacion_completa
+from access_names import (
+    clasificar_acceso_funcional,
+    obtener_clasificacion_completa,
+    clasificar_carril_vehicular,
+)
+
+
+def clasificar_ubicacion_lpr(camara: str) -> str:
+    """Normaliza las variantes conocidas de ubicación en nombres de cámara LPR.
+
+    No asigna por descarte una cámara desconocida a 25 de Junio; así los
+    registros no clasificables pueden conciliarse de forma transparente.
+    """
+    if pd.isna(camara):
+        return "Error de clasificación"
+    nombre = re.sub(r"[_\-]+", " ", str(camara).upper())
+    nombre = re.sub(r"\s+", " ", nombre).strip()
+    if not nombre or nombre in {"NAN", "NONE", "DESCONOCIDO", "DESCONOCIDA"}:
+        return "Error de clasificación"
+    if re.search(r"\bFER(?:ROV(?:IARIA)?)?\b", nombre) or "FERROV" in nombre:
+        return "Ferroviaria"
+    if re.search(r"\b25\s*(?:DE\s*)?JUN(?:IO)?\b", nombre) or "25JUN" in nombre.replace(" ", ""):
+        return "25 de Junio"
+    return "Error de clasificación"
 
 def procesar_datos_lpr(df_crudo: pd.DataFrame, mapeo: dict) -> tuple[pd.DataFrame, dict]:
     """Limpia y estandariza las columnas LPR."""
@@ -36,8 +60,11 @@ def procesar_datos_lpr(df_crudo: pd.DataFrame, mapeo: dict) -> tuple[pd.DataFram
     
     df["Hora"] = pd.to_datetime(df["Hora_Original"], errors="coerce")
     df = df.dropna(subset=["Hora"])
-    df = df[df["Matricula"] != "DESCONOCIDO"]
-    df = df[df["Matricula"] != ""]
+    matriculas_invalidas = {
+        "", "NAN", "NONE", "NULL", "DESCONOCIDO", "DESCONOCIDA",
+        "NO PLATE", "NOPLATE", "SIN PLACA",
+    }
+    df = df[~df["Matricula"].isin(matriculas_invalidas)]
     
     df["Fecha"] = df["Hora"].dt.date
     df["Hora_Dia"] = df["Hora"].dt.hour
@@ -56,9 +83,12 @@ def procesar_datos_lpr(df_crudo: pd.DataFrame, mapeo: dict) -> tuple[pd.DataFram
     df["Categoria_Ingreso"] = clasificaciones.apply(lambda x: x["Categoria_Ingreso"])
     df["Tipo_Flujo_Consolidado"] = clasificaciones.apply(lambda x: x["Tipo_Flujo_Consolidado"])
     df["Mecanismo_Registro"] = clasificaciones.apply(lambda x: x["Mecanismo_Registro"])
-    df["Ubicacion_Ingreso"] = clasificaciones.apply(lambda x: x["Ubicacion_Ingreso"])
+    df["Ubicacion_Ingreso"] = df["Camara"].apply(clasificar_ubicacion_lpr)
     
     # Conservar Punto_Acceso e Ingreso para compatibilidad, usando la categoría oficial
+    df["Categoria_Ingreso"] = df["Ubicacion_Ingreso"].apply(
+        lambda ubicacion: f"Vehicular por LPR {ubicacion}"
+    )
     df["Punto_Acceso"] = df["Categoria_Ingreso"]
     df["Ingreso"] = df["Categoria_Ingreso"]
     # 6. Dirección de LPR
@@ -70,6 +100,14 @@ def procesar_datos_lpr(df_crudo: pd.DataFrame, mapeo: dict) -> tuple[pd.DataFram
         return LPR_DIRECCION_OTRA
 
     df["Direccion"] = df["Camara"].apply(clasificar_direccion)
+    carriles = df.apply(
+        lambda fila: clasificar_carril_vehicular(
+            fila["Camara"], fila["Ubicacion_Ingreso"], fila["Direccion"]
+        ),
+        axis=1,
+    )
+    df["Carril"] = carriles.apply(lambda x: x["Carril"])
+    df["Carril_ID"] = carriles.apply(lambda x: x["Carril_ID"])
     
     # Conservamos Sitio para compatibilidad interna si es necesario, pero será igual al Punto_Acceso
     df["Sitio"] = df["Punto_Acceso"]
@@ -99,4 +137,3 @@ def deduplicar_eventos_vehiculares(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.D
     df_valido = df_valido.sort_values(by="Hora").reset_index(drop=True)
     
     return df_valido, df_duplicados
-

@@ -53,16 +53,17 @@ def procesar_datos_todos(df_crudo: pd.DataFrame, mapeo: dict) -> tuple[pd.DataFr
     if mapeo["nombre"]: renames[mapeo["nombre"]] = "Nombre"
     if mapeo["apellido"]: renames[mapeo["apellido"]] = "Apellido"
     if mapeo["departamento"]: renames[mapeo["departamento"]] = "Departamento"
+    if mapeo.get("identificador_persona"): renames[mapeo["identificador_persona"]] = "Identificador_Persona"
     
     df.rename(columns=renames, inplace=True)
     
     # Asegurar que las columnas existan
-    for col in ["Tiempo_Original", "Punto de acceso", "Device Name", "Tipo_Evento_Original", "Nombre", "Apellido", "Departamento"]:
+    for col in ["Tiempo_Original", "Punto de acceso", "Device Name", "Tipo_Evento_Original", "Nombre", "Apellido", "Departamento", "Identificador_Persona"]:
         if col not in df.columns:
             df[col] = "Desconocido"
             
     # 2. Limpieza de texto básica
-    for col in ["Punto de acceso", "Device Name", "Tipo_Evento_Original", "Nombre", "Apellido", "Departamento"]:
+    for col in ["Punto de acceso", "Device Name", "Tipo_Evento_Original", "Nombre", "Apellido", "Departamento", "Identificador_Persona"]:
         df[col] = df[col].fillna("Desconocido").astype(str).str.strip()
         
     # 3. Extraer Fecha y Hora
@@ -120,6 +121,15 @@ def procesar_datos_todos(df_crudo: pd.DataFrame, mapeo: dict) -> tuple[pd.DataFr
     
     # 7. Persona
     df["Persona"] = (df["Nombre"].replace("Desconocido", "") + " " + df["Apellido"].replace("Desconocido", "")).str.strip()
+    id_limpio = df["Identificador_Persona"].replace(
+        {"Desconocido": "", "nan": "", "None": "", "NAN": "", "NONE": ""}
+    ).astype(str).str.strip()
+    df["Persona_Analitica"] = id_limpio.where(
+        id_limpio.ne(""),
+        df["Persona"].where(df["Persona"].ne(""), pd.NA).map(
+            lambda valor: f"NOMBRE::{valor}" if pd.notna(valor) else pd.NA
+        ),
+    )
     
     metricas = {
         "total_procesados": len(df),
